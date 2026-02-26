@@ -1,0 +1,24 @@
+[
+  {
+    "id": "mem_8db95c3c",
+    "type": "memory",
+    "content": "你好，这是一条测试记忆",
+    "importance": 0.7,
+    "create_time": "2026-02-27T03:38:52.099012",
+    "tags": [
+      "你好",
+      "这是一条测试记忆"
+    ]
+  },
+  {
+    "id": "mem_bd569e5f",
+    "type": "memory",
+    "content": "测试记忆：用户想做下一代AI产品",
+    "importance": 0.8,
+    "create_time": "2026-02-27T03:40:14.799057",
+    "tags": [
+      "测试记忆",
+      "用户想做下一代AI产品"
+    ]
+  }
+]

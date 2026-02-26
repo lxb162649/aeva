@@ -1,0 +1,13 @@
+[project]
+name = "aeva"
+version = "0.1.0"
+description = "AEVA - 数字生命：一个会独自活着的AI"
+requires-python = ">=3.11"
+dependencies = [
+    "fastapi>=0.115.0",
+    "uvicorn>=0.32.0",
+    "websockets>=13.0",
+]
+
+[tool.uv]
+dev-dependencies = []
