@@ -1,7 +1,7 @@
 [project]
 name = "aeva"
-version = "0.2.0"
-description = "AEVA - 数字生命：一个会独自活着、有情感、有记忆、会成长的 AI"
+version = "0.3.0"
+description = "AEVA - 数字生命：一个会独自活着、有情感、有记忆、会成长、能自我更新的 AI"
 requires-python = ">=3.11"
 dependencies = [
     "fastapi>=0.115.0",

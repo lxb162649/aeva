@@ -25,6 +25,7 @@ from emotion_system import EmotionSystem
 from agent_engine import AgentEngine, ACTIVITIES
 from time_engine import TimeEngine
 from llm_client import LLMClient
+from file_access import FileAccess
 
 # ---- 路径配置 ----
 BASE_DIR = Path("/home/lxb/桌面/aeva")
@@ -194,6 +195,17 @@ async def get_emotions() -> dict[str, object]:
         "intimacy": emotion.get_intimacy_level(echo),
         "recent_emotions": emotion.get_recent_emotions(echo, limit=10),
         "emotion_tendency": emotion.get_emotion_tendency(echo),
+    }
+
+
+@app.get("/api/upgrades")
+async def get_upgrades(limit: int = 20) -> dict[str, object]:
+    """获取 AEVA 的自我升级历史（代码自改）"""
+    fa = FileAccess()
+    history = fa.get_upgrade_history(limit=limit)
+    return {
+        "upgrades": history,
+        "total": len(fa.upgrade_history),
     }
 
 
