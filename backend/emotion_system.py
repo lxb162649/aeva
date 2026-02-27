@@ -116,6 +116,42 @@ class EmotionSystem:
         self.store = store
 
     # ============================================================
+    # 心情显示
+    # ============================================================
+
+    def get_mood_display(self, echo: dict[str, object]) -> dict[str, str]:
+        """获取当前心情的中文名和 emoji，用于前端展示"""
+        mood = str(echo.get("mood", "calm"))
+        display = MOOD_DISPLAY.get(mood, MOOD_DISPLAY["calm"])
+        return {"mood": mood, "zh": display["zh"], "emoji": display["emoji"]}
+
+    # ============================================================
+    # 情感记忆（预留）
+    # ============================================================
+
+    def record_emotion_event(
+        self, echo: dict[str, object], event_type: str, detail: str
+    ) -> dict[str, object]:
+        """
+        记录一次情感事件到 echo 的情感记忆中。
+        用于未来回忆和情感叙事。
+        """
+        memory = {
+            "id": str(uuid4()),
+            "type": event_type,
+            "detail": detail,
+            "mood": str(echo.get("mood", "calm")),
+            "intimacy": self.get_intimacy(echo),
+            "timestamp": datetime.utcnow().isoformat(),
+        }
+        emotion_memories: list = echo.setdefault("emotion_memories", [])  # type: ignore
+        emotion_memories.append(memory)
+        # 只保留最近 100 条情感记忆
+        if len(emotion_memories) > 100:
+            echo["emotion_memories"] = emotion_memories[-100:]
+        return memory
+
+    # ============================================================
     # 心情管理
     # ============================================================
 
