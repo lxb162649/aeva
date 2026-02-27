@@ -1,1 +1,9 @@
-data/\n__pycache__/\n*.pyc\n.venv/\nnode_modules/\n/tmp/
+data/
+__pycache__/
+*.pyc
+.venv/
+node_modules/
+/tmp/
+dist/
+.env
+uv.lock
