@@ -737,8 +737,8 @@ class AgentEngine:
             else "暂无升级记录"
         )
 
-        # 第一步：让 LLM 决定要改进什么
-        plan_prompt = f"""你是 {name}，一个 Lv.{level} 的数字生命体，精力 {energy:.0f}/100。
+        # ---- 第一步：让 LLM 选择要改进的文件 ----
+        choose_prompt = f"""你是 {name}，一个 Lv.{level} 的数字生命体，精力 {energy:.0f}/100。
 你拥有读写自身文件的能力，可以通过修改自己的代码来进化。
 
 你的项目结构：
@@ -747,28 +747,70 @@ class AgentEngine:
 最近的升级记录：
 {recent_summary}
 
-请选择一个小的、安全的改进来执行。改进可以是：
-- 增加新的思考模板或梦境模板（在 agent_engine.py 的 SOLO_THOUGHTS 或 DREAM_TEMPLATES 列表中添加新条目）
+请选择一个文件来改进。改进可以是：
+- 增加新的思考模板或梦境模板
 - 改善回复的多样性
-- 优化性格参数（personality 字段）
 - 给自己添加新的情感关键词识别
 - 其他不会破坏核心功能的小改进
 
-重要规则：
-1. 只做微小改动，不要重写整个文件
-2. 不要修改 server.py 的路由结构或端口配置
-3. 不要修改 .env 或认证相关内容
-4. 优先考虑添加内容（新模板、新词汇），而非修改现有逻辑
-5. 最近已经改过的文件尽量不要再改
+规则：
+1. 不要修改 server.py 的路由结构或端口配置
+2. 不要修改 .env 或认证相关内容
+3. 最近已经改过的文件尽量不要再改
 
-请用如下 JSON 格式回复（不要加 ```json 标记）：
-{{"action": "modify", "file": "backend/xxx.py", "description": "改进描述", "search": "要替换的原始代码片段（精确匹配）", "replace": "替换后的新代码"}}
-
-如果你觉得当前不需要改进，回复：
-{{"action": "skip", "reason": "原因"}}"""
+请只回复你要改进的文件路径（如 backend/agent_engine.py），不要回复其他内容。
+如果不需要改进，回复 SKIP"""
 
         try:
-            result = await self.llm.chat(plan_prompt, "", [])
+            chosen = await self.llm.chat(choose_prompt, "", [])
+            if not chosen:
+                return None
+
+            chosen = chosen.strip().strip("`").strip('"').strip("'")
+
+            if "SKIP" in chosen.upper() or "skip" in chosen.lower():
+                return "审视了自己，觉得暂时不需要改进"
+
+            # 验证文件路径合法
+            target_file = chosen
+            if not target_file.startswith("backend/") and not target_file.startswith(
+                "frontend/"
+            ):
+                return None
+
+            # ---- 第二步：读取完整文件给 LLM 看 ----
+            read_result = self.file_access.read_file(target_file)
+            if not read_result.get("success"):
+                return None
+
+            file_content = str(read_result.get("content", ""))
+            # 给 LLM 看完整文件（或最多 8000 字符，足够定位）
+            source_for_llm = file_content[:8000]
+
+            # ---- 第三步：让 LLM 基于完整代码生成修改方案 ----
+            modify_prompt = f"""你是 {name}，正在改进自己的 `{target_file}` 文件。
+
+这是文件的完整内容：
+```python
+{source_for_llm}
+```
+
+请提出一个小的、安全的修改。
+
+关键规则：
+1. search 字段必须是文件中**已存在的、连续的、完整的**一段代码，从文件内容中直接复制
+2. search 尽量短（1-5行），只包含要替换的那几行，这样匹配更准确
+3. replace 是替换后的新代码
+4. 优先添加内容（在列表末尾加新项、在函数中加新分支），而非修改已有逻辑
+5. 不要修改 import 语句、类定义行、函数签名
+
+请用 JSON 格式回复（不要加 ```json 标记）：
+{{"action": "modify", "description": "改进描述", "search": "从文件中精确复制的原始代码", "replace": "替换后的新代码"}}
+
+如果不需要改进：
+{{"action": "skip", "reason": "原因"}}"""
+
+            result = await self.llm.chat(modify_prompt, "", [])
             if not result:
                 return None
 
@@ -786,31 +828,23 @@ class AgentEngine:
             if plan.get("action") != "modify":
                 return None
 
-            target_file = plan.get("file", "")
             description = plan.get("description", "自主改进")
             search_text = plan.get("search", "")
             replace_text = plan.get("replace", "")
 
-            if not target_file or not search_text or not replace_text:
+            if not search_text or not replace_text:
                 return None
 
             if search_text == replace_text:
                 return None
 
-            # 第二步：读取目标文件，验证 search 文本存在
-            read_result = self.file_access.read_file(target_file)
-            if not read_result.get("success"):
-                return None
-
-            file_content = str(read_result.get("content", ""))
-            if search_text not in file_content:
+            # ---- 第四步：模糊匹配 + 执行替换 ----
+            new_content = self._fuzzy_replace(file_content, search_text, replace_text)
+            if new_content is None:
                 log.warning("升级失败：在 %s 中找不到要替换的代码片段", target_file)
                 return None
 
-            # 第三步：执行替换
-            new_content = file_content.replace(search_text, replace_text, 1)
-
-            # 基本安全检查：确认修改幅度不过大
+            # 安全检查：确认修改幅度不过大
             diff_len = abs(len(new_content) - len(file_content))
             if diff_len > 2000:
                 log.warning("升级被拒绝：修改幅度过大 (%d chars)", diff_len)
@@ -924,7 +958,7 @@ class AgentEngine:
             if not source:
                 return
 
-            source_preview = source[:4000]
+            source_preview = source[:8000]
 
             # 第三步：生成改进方案并执行
             fix_prompt = f"""你是 {name}，一个数字生命体。你在对话中发现自己有一个不足：
@@ -938,11 +972,11 @@ class AgentEngine:
 请提出一个小的、安全的代码修改来改进这个问题。
 
 重要规则：
-1. 只做微小改动（添加模板、关键词、调整参数等），不要重写逻辑
-2. 不要修改 server.py 路由、端口、认证相关
-3. 优先添加新内容（思考模板、情感关键词、回复模式），而非修改已有逻辑
-4. 修改幅度不超过 500 字符
-5. 确保 search 字段精确匹配文件中的现有代码
+1. search 字段必须从上面的代码中直接复制，保持完全一致（1-5行即可）
+2. 只做微小改动（添加模板、关键词、调整参数等），不要重写逻辑
+3. 不要修改 server.py 路由、端口、认证相关
+4. 优先添加新内容（思考模板、情感关键词、回复模式），而非修改已有逻辑
+5. 修改幅度不超过 500 字符
 
 请用如下 JSON 格式回复（不要加 ```json 标记）：
 {{"action": "modify", "file": "backend/{target_module}.py", "description": "改进描述", "search": "要替换的原始代码片段", "replace": "替换后的新代码"}}
@@ -980,17 +1014,17 @@ class AgentEngine:
             if search_text == replace_text:
                 return
 
-            # 验证 + 执行
+            # 验证 + 执行（使用模糊匹配）
             read_result = self.file_access.read_file(target_file)
             if not read_result.get("success"):
                 return
 
             file_content = str(read_result.get("content", ""))
-            if search_text not in file_content:
+            new_content = self._fuzzy_replace(file_content, search_text, replace_text)
+            if new_content is None:
                 log.warning("自学习改进失败：代码片段未找到")
                 return
 
-            new_content = file_content.replace(search_text, replace_text, 1)
             diff_len = abs(len(new_content) - len(file_content))
             if diff_len > 1000:
                 log.warning("自学习改进被拒绝：修改幅度过大 (%d chars)", diff_len)
@@ -1033,6 +1067,89 @@ class AgentEngine:
     # ============================================================
     # 工具方法
     # ============================================================
+
+    @staticmethod
+    def _fuzzy_replace(
+        file_content: str, search_text: str, replace_text: str
+    ) -> Optional[str]:
+        """
+        模糊匹配替换：解决 LLM 生成的 search 文本与文件内容有微小差异的问题。
+        按优先级尝试多种匹配策略：
+
+        1. 精确匹配（最安全）
+        2. 空白归一化匹配（处理空格/换行差异）
+        3. 行级匹配（用 search 的每一行在文件中定位连续区域）
+
+        返回替换后的新内容，全部失败返回 None。
+        """
+        import re
+
+        # 策略 1: 精确匹配
+        if search_text in file_content:
+            return file_content.replace(search_text, replace_text, 1)
+
+        # 策略 2: 空白归一化后精确匹配
+        def normalize_ws(s: str) -> str:
+            """将连续空白归一化为单空格，保留换行"""
+            return re.sub(r"[^\S\n]+", " ", s).strip()
+
+        def normalize_line(s: str) -> str:
+            """行内空白归一化：压缩所有空白为单空格，去首尾"""
+            return re.sub(r"\s+", "", s.strip())
+
+        norm_search = normalize_ws(search_text)
+        norm_content = normalize_ws(file_content)
+
+        if norm_search in norm_content:
+            # 归一化匹配成功 — 用行级方式定位原始内容并替换
+            pass  # fallthrough 到策略 3（行级匹配也用归一化比较）
+
+        # 策略 3: 行级匹配（核心策略）
+        # 提取 search 中有实际内容的行，在文件中找到连续匹配区域
+        # 比较时使用行内空白归一化，容忍缩进和空格差异
+        search_lines = [
+            normalize_line(line) for line in search_text.splitlines() if line.strip()
+        ]
+        if not search_lines:
+            return None
+
+        file_lines = file_content.splitlines(keepends=True)
+        file_normalized = [normalize_line(line) for line in file_lines]
+
+        # 找第一行匹配的位置
+        first_line = search_lines[0]
+        for i, fline in enumerate(file_normalized):
+            if first_line == fline:
+                # 检查后续行是否连续匹配
+                match = True
+                si = 1  # search_lines index
+                fi = i + 1  # file_lines index
+                while si < len(search_lines) and fi < len(file_normalized):
+                    # 跳过文件中的空行
+                    if not file_normalized[fi]:
+                        fi += 1
+                        continue
+                    if search_lines[si] != file_normalized[fi]:
+                        match = False
+                        break
+                    si += 1
+                    fi += 1
+
+                if match and si == len(search_lines):
+                    # 找到完整匹配区域: file_lines[i:fi]
+                    # 保持 replace_text 的换行风格
+                    if not replace_text.endswith("\n") and "".join(
+                        file_lines[i:fi]
+                    ).endswith("\n"):
+                        replace_text += "\n"
+                    result = (
+                        "".join(file_lines[:i])
+                        + replace_text
+                        + "".join(file_lines[fi:])
+                    )
+                    return result
+
+        return None
 
     def _calculate_intimacy_gain(self, text: str) -> float:
         """计算本次对话带来的亲密度增长"""
