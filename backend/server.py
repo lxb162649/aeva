@@ -16,7 +16,7 @@ from contextlib import asynccontextmanager
 from collections.abc import AsyncGenerator
 
 import uvicorn
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect, UploadFile, File
 from fastapi.staticfiles import StaticFiles
 
 from models import DataStore
@@ -30,6 +30,12 @@ from llm_client import LLMClient
 BASE_DIR = Path("/home/lxb/桌面/aeva")
 DATA_DIR = BASE_DIR / "data"
 FRONTEND_DIR = BASE_DIR / "frontend"
+UPLOADS_DIR = DATA_DIR / "uploads"
+UPLOADS_DIR.mkdir(parents=True, exist_ok=True)
+
+# ---- 字数限制 ----
+MAX_INPUT_CHARS = 20000
+MAX_OUTPUT_CHARS = 20000
 
 # ---- 初始化各模块 ----
 store = DataStore(DATA_DIR)
@@ -192,29 +198,152 @@ async def get_emotions() -> dict[str, object]:
 
 
 # ============================================================
+# 文件上传 API
+# ============================================================
+
+ALLOWED_EXTENSIONS = {
+    # 图片
+    ".jpg",
+    ".jpeg",
+    ".png",
+    ".gif",
+    ".bmp",
+    ".webp",
+    ".svg",
+    # 数据文件
+    ".csv",
+    ".json",
+    ".txt",
+    ".xlsx",
+    ".xls",
+    ".pdf",
+    ".doc",
+    ".docx",
+    ".xml",
+    ".yaml",
+    ".yml",
+    ".md",
+    ".log",
+    ".tsv",
+}
+MAX_FILE_SIZE = 10 * 1024 * 1024  # 10MB
+
+
+@app.post("/api/upload")
+async def upload_files(files: list[UploadFile] = File(...)) -> dict[str, object]:
+    """上传文件（图片、数据文件），返回文件信息列表"""
+    import uuid
+
+    uploaded: list[dict[str, str]] = []
+    for file in files:
+        # 检查扩展名
+        ext = Path(file.filename or "unknown").suffix.lower()
+        if ext not in ALLOWED_EXTENSIONS:
+            continue
+
+        # 读取文件内容
+        content = await file.read()
+        if len(content) > MAX_FILE_SIZE:
+            continue
+
+        # 生成唯一文件名
+        unique_name = f"{uuid.uuid4().hex[:12]}_{file.filename}"
+        save_path = UPLOADS_DIR / unique_name
+        save_path.write_bytes(content)
+
+        # 判断文件类型
+        is_image = ext in {".jpg", ".jpeg", ".png", ".gif", ".bmp", ".webp", ".svg"}
+        file_type = "image" if is_image else "data"
+
+        # 对于文本类数据文件，提取文本内容摘要
+        text_content = ""
+        if file_type == "data" and ext in {
+            ".csv",
+            ".json",
+            ".txt",
+            ".md",
+            ".log",
+            ".xml",
+            ".yaml",
+            ".yml",
+            ".tsv",
+        }:
+            try:
+                text_content = content.decode("utf-8", errors="ignore")[:5000]
+            except Exception:
+                text_content = ""
+
+        uploaded.append(
+            {
+                "filename": file.filename or "unknown",
+                "saved_name": unique_name,
+                "type": file_type,
+                "ext": ext,
+                "size": str(len(content)),
+                "text_content": text_content,
+            }
+        )
+
+    return {"files": uploaded, "count": len(uploaded)}
+
+
+# ============================================================
 # WebSocket 聊天
 # ============================================================
 
 
 @app.websocket("/ws/chat")
 async def chat(ws: WebSocket) -> None:
-    """WebSocket 聊天端点：接收用户消息，返回 AEVA 回复"""
+    """WebSocket 聊天端点：接收用户消息，返回 AEVA 回复（支持文件附件）"""
     await ws.accept()
     try:
         while True:
             data = await ws.receive_text()
-            msg: dict[str, str] = json.loads(data)
-            user_text = msg.get("text", "").strip()
+            msg: dict[str, object] = json.loads(data)
+            user_text = str(msg.get("text", "")).strip()
+            files_info: list[dict[str, str]] = msg.get("files", [])  # type: ignore[assignment]
 
-            if not user_text:
+            if not user_text and not files_info:
                 continue
+
+            # 输入字数限制
+            if len(user_text) > MAX_INPUT_CHARS:
+                user_text = user_text[:MAX_INPUT_CHARS]
+
+            # 如果有文件附件，将文件信息附加到消息中
+            file_context = ""
+            if files_info:
+                file_parts: list[str] = []
+                for f in files_info:
+                    fname = f.get("filename", "")
+                    ftype = f.get("type", "")
+                    if ftype == "image":
+                        file_parts.append(f"[用户上传了图片: {fname}]")
+                    else:
+                        text_content = f.get("text_content", "")
+                        if text_content:
+                            # 截取文件内容摘要
+                            preview = text_content[:3000]
+                            file_parts.append(
+                                f"[用户上传了文件 {fname}，内容如下：\n{preview}]"
+                            )
+                        else:
+                            file_parts.append(f"[用户上传了文件: {fname}]")
+                file_context = "\n".join(file_parts)
+
+            # 组合最终消息
+            full_text = user_text
+            if file_context:
+                full_text = (
+                    f"{user_text}\n{file_context}" if user_text else file_context
+                )
 
             # 加载状态和对话历史
             echo = store.load_echo()
             chat_history = store.get_chat_history_for_llm(limit=40)
 
             # 记录用户消息到对话历史
-            store.add_chat_message("user", user_text)
+            store.add_chat_message("user", full_text)
 
             # 更新活跃时间
             echo["last_active"] = datetime.now().isoformat()
@@ -225,7 +354,11 @@ async def chat(ws: WebSocket) -> None:
             store.save_echo(echo)
 
             # 通过 AgentEngine 处理消息（含 LLM 调用）
-            reply = await agent.handle_user_message(user_text, echo, chat_history)
+            reply = await agent.handle_user_message(full_text, echo, chat_history)
+
+            # 输出字数限制
+            if len(reply) > MAX_OUTPUT_CHARS:
+                reply = reply[:MAX_OUTPUT_CHARS]
 
             # 记录 AEVA 回复到对话历史
             store.add_chat_message("assistant", reply)

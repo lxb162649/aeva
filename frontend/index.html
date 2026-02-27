@@ -105,14 +105,27 @@
             <div class="message-bubble">连接建立中，请稍候...</div>
           </div>
         </div>
+        <!-- 文件预览区 -->
+        <div class="file-preview-area" id="filePreviewArea" style="display:none;">
+          <div class="file-preview-list" id="filePreviewList"></div>
+        </div>
         <div class="chat-input-area">
-          <input
-            type="text"
-            class="chat-input"
-            id="chatInput"
-            placeholder="对 AEVA 说些什么..."
-            autocomplete="off"
-          />
+          <input type="file" id="fileInput" multiple accept="image/*,.csv,.json,.txt,.xlsx,.xls,.pdf,.doc,.docx,.xml,.yaml,.yml,.md,.log,.tsv" style="display:none;" />
+          <button class="chat-upload-btn" id="chatUploadBtn" title="上传图片/数据文件">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"/>
+            </svg>
+          </button>
+          <div class="chat-textarea-wrap">
+            <textarea
+              class="chat-input"
+              id="chatInput"
+              placeholder="对 AEVA 说些什么... (Ctrl/Shift+Enter 换行)"
+              rows="1"
+              maxlength="20000"
+            ></textarea>
+            <span class="char-count" id="charCount">0/20000</span>
+          </div>
           <button class="chat-send-btn" id="chatSendBtn" onclick="sendMessage()">
             SEND
           </button>

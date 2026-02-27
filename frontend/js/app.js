@@ -4,8 +4,10 @@
    ============================================================ */
 
 const API = "http://127.0.0.1:19260";
+const MAX_CHARS = 20000;
 let ws = null;
 let isSending = false;
+let pendingFiles = []; // 待发送的文件列表
 
 // ============================================================
 // 初始化
@@ -16,6 +18,8 @@ document.addEventListener("DOMContentLoaded", () => {
   loadMemories();
   connectChat();
   initParticles();
+  initFileUpload();
+  initTextarea();
 
   // 定时刷新
   setInterval(loadStatus, 10000);
@@ -246,12 +250,12 @@ function setConnectionStatus(state) {
 }
 
 // ============================================================
-// 发送消息
+// 发送消息（支持文件附件）
 // ============================================================
 function sendMessage() {
   const input = document.getElementById("chatInput");
   const text = input.value.trim();
-  if (!text || isSending) return;
+  if ((!text && pendingFiles.length === 0) || isSending) return;
 
   if (!ws || ws.readyState !== WebSocket.OPEN) {
     addMessage("aeva", "[连接已断开，正在重连...]");
@@ -260,21 +264,68 @@ function sendMessage() {
 
   isSending = true;
   document.getElementById("chatSendBtn").disabled = true;
-  addMessage("user", text);
+
+  // 显示用户消息（含文件预览）
+  if (pendingFiles.length > 0) {
+    const fileNames = pendingFiles.map(f => f.name).join(", ");
+    const displayText = text ? `${text}\n📎 ${fileNames}` : `📎 ${fileNames}`;
+    addMessage("user", displayText);
+  } else {
+    addMessage("user", text);
+  }
+
   showTypingIndicator();
 
-  try {
-    ws.send(JSON.stringify({ text: text }));
-  } catch (err) {
-    console.error("[sendMessage] 发送失败:", err);
-    removeTypingIndicator();
-    addMessage("aeva", "[消息发送失败，请稍后重试]");
-    isSending = false;
-    document.getElementById("chatSendBtn").disabled = false;
+  // 如果有文件，先上传再发送消息
+  if (pendingFiles.length > 0) {
+    uploadAndSend(text);
+  } else {
+    try {
+      ws.send(JSON.stringify({ text: text }));
+    } catch (err) {
+      console.error("[sendMessage] 发送失败:", err);
+      removeTypingIndicator();
+      addMessage("aeva", "[消息发送失败，请稍后重试]");
+      isSending = false;
+      document.getElementById("chatSendBtn").disabled = false;
+    }
   }
 
   input.value = "";
+  updateCharCount();
+  autoResizeTextarea();
+  clearFilePreviews();
   input.focus();
+}
+
+// ============================================================
+// 上传文件后发送消息
+// ============================================================
+async function uploadAndSend(text) {
+  try {
+    const formData = new FormData();
+    for (const file of pendingFiles) {
+      formData.append("files", file);
+    }
+
+    const resp = await fetch(`${API}/api/upload`, { method: "POST", body: formData });
+    if (!resp.ok) throw new Error(`上传失败: HTTP ${resp.status}`);
+
+    const result = await resp.json();
+    const fileInfos = result.files || [];
+
+    // 通过 WebSocket 发送带文件信息的消息
+    ws.send(JSON.stringify({
+      text: text,
+      files: fileInfos,
+    }));
+  } catch (err) {
+    console.error("[uploadAndSend] 失败:", err);
+    removeTypingIndicator();
+    addMessage("aeva", "[文件上传失败，请重试]");
+    isSending = false;
+    document.getElementById("chatSendBtn").disabled = false;
+  }
 }
 
 // ============================================================
@@ -287,7 +338,8 @@ function addMessage(role, text) {
 
   const bubble = document.createElement("div");
   bubble.className = "message-bubble";
-  bubble.textContent = text;
+  // 支持多行文本：将换行符转为 <br>
+  bubble.innerHTML = escapeHtml(text).replace(/\n/g, "<br>");
   div.appendChild(bubble);
 
   container.appendChild(div);
@@ -312,7 +364,12 @@ function typeMessage(role, text) {
 
   function type() {
     if (i < text.length) {
-      bubble.textContent += text.charAt(i);
+      const char = text.charAt(i);
+      if (char === "\n") {
+        bubble.appendChild(document.createElement("br"));
+      } else {
+        bubble.appendChild(document.createTextNode(char));
+      }
       i++;
       container.scrollTop = container.scrollHeight;
       setTimeout(type, speed);
@@ -456,17 +513,186 @@ async function loadMemories() {
 }
 
 // ============================================================
-// 回车发送
+// 键盘事件：Enter 发送，Ctrl/Shift+Enter 换行
 // ============================================================
 document.addEventListener("keydown", (e) => {
   if (
-    e.key === "Enter" && !e.shiftKey &&
-    document.activeElement && document.activeElement.id === "chatInput"
+    e.key === "Enter" &&
+    document.activeElement &&
+    document.activeElement.id === "chatInput"
   ) {
+    if (e.ctrlKey || e.shiftKey) {
+      // Ctrl+Enter 或 Shift+Enter → 换行（textarea 自然支持）
+      return; // 不阻止默认行为，让 textarea 插入换行
+    }
+    // 普通 Enter → 发送消息
     e.preventDefault();
     sendMessage();
   }
 });
+
+// ============================================================
+// Textarea 初始化 & 自动高度调整
+// ============================================================
+function initTextarea() {
+  const input = document.getElementById("chatInput");
+  // 输入时更新字数统计 & 自动调整高度
+  input.addEventListener("input", () => {
+    // 字数限制
+    if (input.value.length > MAX_CHARS) {
+      input.value = input.value.substring(0, MAX_CHARS);
+    }
+    updateCharCount();
+    autoResizeTextarea();
+  });
+  // 粘贴时也检查
+  input.addEventListener("paste", () => {
+    setTimeout(() => {
+      if (input.value.length > MAX_CHARS) {
+        input.value = input.value.substring(0, MAX_CHARS);
+      }
+      updateCharCount();
+      autoResizeTextarea();
+    }, 0);
+  });
+  updateCharCount();
+}
+
+function updateCharCount() {
+  const input = document.getElementById("chatInput");
+  const counter = document.getElementById("charCount");
+  if (!counter) return;
+  const len = input.value.length;
+  counter.textContent = `${len}/${MAX_CHARS}`;
+  if (len > MAX_CHARS * 0.9) {
+    counter.classList.add("char-count-warn");
+  } else {
+    counter.classList.remove("char-count-warn");
+  }
+}
+
+function autoResizeTextarea() {
+  const input = document.getElementById("chatInput");
+  input.style.height = "auto";
+  const maxHeight = 120; // 最大 ~5 行
+  input.style.height = Math.min(input.scrollHeight, maxHeight) + "px";
+}
+
+// ============================================================
+// 文件上传功能
+// ============================================================
+function initFileUpload() {
+  const uploadBtn = document.getElementById("chatUploadBtn");
+  const fileInput = document.getElementById("fileInput");
+
+  uploadBtn.addEventListener("click", () => {
+    fileInput.click();
+  });
+
+  fileInput.addEventListener("change", (e) => {
+    const files = Array.from(e.target.files);
+    if (files.length === 0) return;
+
+    for (const file of files) {
+      // 限制单文件 10MB
+      if (file.size > 10 * 1024 * 1024) {
+        addMessage("aeva", `[文件 ${file.name} 超过 10MB 限制]`);
+        continue;
+      }
+      pendingFiles.push(file);
+      addFilePreview(file);
+    }
+
+    // 清空 input 以允许再次选择相同文件
+    fileInput.value = "";
+  });
+
+  // 支持拖拽上传
+  const chatSection = document.querySelector(".chat-section");
+  chatSection.addEventListener("dragover", (e) => {
+    e.preventDefault();
+    chatSection.classList.add("drag-over");
+  });
+  chatSection.addEventListener("dragleave", () => {
+    chatSection.classList.remove("drag-over");
+  });
+  chatSection.addEventListener("drop", (e) => {
+    e.preventDefault();
+    chatSection.classList.remove("drag-over");
+    const files = Array.from(e.dataTransfer.files);
+    for (const file of files) {
+      if (file.size > 10 * 1024 * 1024) {
+        addMessage("aeva", `[文件 ${file.name} 超过 10MB 限制]`);
+        continue;
+      }
+      pendingFiles.push(file);
+      addFilePreview(file);
+    }
+  });
+}
+
+function addFilePreview(file) {
+  const previewArea = document.getElementById("filePreviewArea");
+  const previewList = document.getElementById("filePreviewList");
+  previewArea.style.display = "flex";
+
+  const item = document.createElement("div");
+  item.className = "file-preview-item";
+
+  if (file.type.startsWith("image/")) {
+    const img = document.createElement("img");
+    img.className = "file-preview-img";
+    const reader = new FileReader();
+    reader.onload = (e) => { img.src = e.target.result; };
+    reader.readAsDataURL(file);
+    item.appendChild(img);
+  } else {
+    const icon = document.createElement("div");
+    icon.className = "file-preview-icon";
+    icon.textContent = getFileIcon(file.name);
+    item.appendChild(icon);
+  }
+
+  const name = document.createElement("span");
+  name.className = "file-preview-name";
+  name.textContent = file.name.length > 12 ? file.name.substring(0, 10) + "..." : file.name;
+  name.title = file.name;
+  item.appendChild(name);
+
+  // 删除按钮
+  const removeBtn = document.createElement("button");
+  removeBtn.className = "file-preview-remove";
+  removeBtn.textContent = "×";
+  removeBtn.onclick = () => {
+    const idx = pendingFiles.indexOf(file);
+    if (idx !== -1) pendingFiles.splice(idx, 1);
+    item.remove();
+    if (pendingFiles.length === 0) {
+      previewArea.style.display = "none";
+    }
+  };
+  item.appendChild(removeBtn);
+
+  previewList.appendChild(item);
+}
+
+function clearFilePreviews() {
+  pendingFiles = [];
+  const previewArea = document.getElementById("filePreviewArea");
+  const previewList = document.getElementById("filePreviewList");
+  previewList.innerHTML = "";
+  previewArea.style.display = "none";
+}
+
+function getFileIcon(filename) {
+  const ext = filename.split(".").pop().toLowerCase();
+  const iconMap = {
+    csv: "📊", json: "📋", txt: "📄", xlsx: "📊", xls: "📊",
+    pdf: "📕", doc: "📘", docx: "📘", xml: "📰", yaml: "⚙️",
+    yml: "⚙️", md: "📝", log: "📃", tsv: "📊",
+  };
+  return iconMap[ext] || "📎";
+}
 
 // ============================================================
 // 光球粒子
