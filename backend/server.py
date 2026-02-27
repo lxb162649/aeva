@@ -1,21 +1,24 @@
-# server.py — AEVA FastAPI 服务
+# server.py — AEVA FastAPI 服务 v2
+# 整合 LLM 对话、情感系统、分层记忆、增强自主行为
 # 提供 REST API、WebSocket 聊天、静态文件服务
 
 import asyncio
 import json
-import random
 from datetime import datetime
 from pathlib import Path
+from contextlib import asynccontextmanager
+from collections.abc import AsyncGenerator
 
 import uvicorn
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
-from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
 from models import DataStore
 from memory_system import MemorySystem
-from agent_engine import AgentEngine
+from emotion_system import EmotionSystem
+from agent_engine import AgentEngine, ACTIVITIES
 from time_engine import TimeEngine
+from llm_client import LLMClient
 
 # ---- 路径配置 ----
 BASE_DIR = Path("/home/lxb/桌面/aeva")
@@ -25,62 +28,141 @@ FRONTEND_DIR = BASE_DIR / "frontend"
 # ---- 初始化各模块 ----
 store = DataStore(DATA_DIR)
 memory = MemorySystem(store)
-agent = AgentEngine(store, memory)
-engine = TimeEngine(store)
+emotion = EmotionSystem(store)
+llm = LLMClient()
+agent = AgentEngine(store, memory, emotion, llm)
+engine = TimeEngine(store, emotion)
 
-# ---- FastAPI 应用 ----
-app = FastAPI(title="AEVA - 数字生命")
+# ---- 自主行为定时任务 ----
+autonomous_task: asyncio.Task | None = None  # type: ignore[type-arg]
 
 
-@app.on_event("startup")
-async def startup() -> None:
-    """启动时：开启时间引擎后台任务，检测离线时间并触发自主行为"""
-    # 启动时间引擎（后台持续运行）
+async def autonomous_loop() -> None:
+    """每 3 分钟执行一次自主行为"""
+    while True:
+        await asyncio.sleep(180)
+        try:
+            await agent.run_autonomous_cycle()
+        except Exception as e:
+            print(f"[AutoLoop] 自主行为异常: {e}")
+
+
+# ---- FastAPI 生命周期 ----
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
+    """启动和关闭时的生命周期管理"""
+    global autonomous_task
+
+    # 启动时间引擎
     asyncio.create_task(engine.start())
+
+    # 启动自主行为循环
+    autonomous_task = asyncio.create_task(autonomous_loop())
 
     # 检测离线时间，超过1分钟则触发一次自主行为
     echo = store.load_echo()
     last_active_str = str(echo.get("last_active", datetime.now().isoformat()))
-    last = datetime.fromisoformat(last_active_str)
-    offline = (datetime.now() - last).total_seconds()
+    try:
+        last = datetime.fromisoformat(last_active_str)
+        offline = (datetime.now() - last).total_seconds()
+    except (ValueError, TypeError):
+        offline = 0
 
     if offline > 60:
         echo["_offline_seconds"] = offline
         store.save_echo(echo)
         await agent.run_autonomous_cycle()
 
+    print(
+        f"[AEVA] 服务已启动 | LLM: {'已启用' if llm.enabled else '未配置'} | 端口: 19260"
+    )
 
-@app.on_event("shutdown")
-async def shutdown() -> None:
-    """关闭时停止时间引擎"""
+    yield
+
+    # 关闭
     engine.stop()
+    if autonomous_task:
+        autonomous_task.cancel()
+    print("[AEVA] 服务已停止")
 
 
-# ---- REST API 端点 ----
+# ---- FastAPI 应用 ----
+app = FastAPI(title="AEVA - 数字生命", lifespan=lifespan)
+
+
+# ============================================================
+# REST API 端点
+# ============================================================
 
 
 @app.get("/api/status")
 async def get_status() -> dict[str, object]:
-    """获取 AEVA 当前状态"""
+    """获取 AEVA 完整状态（含亲密度、活动、情感信息）"""
     echo = store.load_echo()
-    # 计算已存活的可读时长
+
+    # 计算可读时长
     total_seconds = float(str(echo.get("total_life_seconds", 0)))
     hours = int(total_seconds // 3600)
     minutes = int((total_seconds % 3600) // 60)
     echo["life_display"] = f"{hours}小时{minutes}分钟"
+
+    # 亲密度信息
+    intimacy_info = emotion.get_intimacy_level(echo)
+    echo["intimacy_info"] = intimacy_info
+
+    # 心情显示信息
+    mood = str(echo.get("mood", "calm"))
+    mood_display = emotion.get_mood_display(mood)
+    echo["mood_display"] = mood_display
+
+    # 活动显示信息
+    activity = str(echo.get("activity", "waiting"))
+    activity_info = ACTIVITIES.get(activity, ACTIVITIES.get("waiting", {}))
+    echo["activity_display"] = {
+        "zh": activity_info.get("zh", "等待中"),
+        "emoji": activity_info.get("emoji", "⏳"),
+    }
+
+    # 记忆统计
+    echo["memory_stats"] = memory.get_memory_stats()
+
     return echo
 
 
 @app.get("/api/memories")
-async def get_memories() -> list[dict[str, object]]:
-    """获取全部记忆列表"""
-    return store.get_memories()
+async def get_memories() -> dict[str, object]:
+    """获取记忆列表（含分层信息和统计）"""
+    all_memories = store.get_memories()
+    stats = memory.get_memory_stats()
+
+    # 按层级分组
+    layers: dict[str, list[dict[str, object]]] = {
+        "core": [],
+        "long_term": [],
+        "short_term": [],
+    }
+    for m in all_memories:
+        layer = str(m.get("layer", "short_term"))
+        if layer in layers:
+            layers[layer].append(m)
+
+    return {
+        "memories": all_memories,
+        "layers": layers,
+        "stats": stats,
+    }
 
 
 @app.get("/api/logs")
-async def get_logs() -> list[dict[str, object]]:
-    """获取全部生命日志"""
-    return store.get_life_logs()
+async def get_logs(limit: int = 50) -> dict[str, object]:
+    """获取生命日志（支持分页）"""
+    all_logs = store.get_life_logs()
+    return {
+        "logs": all_logs[-limit:],
+        "total": len(all_logs),
+    }
 
 
 @app.get("/api/tasks")
@@ -89,7 +171,23 @@ async def get_tasks() -> list[dict[str, object]]:
     return store.get_all_tasks()
 
 
-# ---- WebSocket 聊天 ----
+@app.get("/api/emotions")
+async def get_emotions() -> dict[str, object]:
+    """获取情感状态详情"""
+    echo = store.load_echo()
+    return {
+        "mood": str(echo.get("mood", "calm")),
+        "mood_display": emotion.get_mood_display(str(echo.get("mood", "calm"))),
+        "energy": float(str(echo.get("energy", 50))),
+        "intimacy": emotion.get_intimacy_level(echo),
+        "recent_emotions": emotion.get_recent_emotions(echo, limit=10),
+        "emotion_tendency": emotion.get_emotion_tendency(echo),
+    }
+
+
+# ============================================================
+# WebSocket 聊天
+# ============================================================
 
 
 @app.websocket("/ws/chat")
@@ -100,21 +198,35 @@ async def chat(ws: WebSocket) -> None:
         while True:
             data = await ws.receive_text()
             msg: dict[str, str] = json.loads(data)
-            user_text = msg.get("text", "")
+            user_text = msg.get("text", "").strip()
 
-            # 存入记忆
-            memory.add_memory(user_text, importance=0.6)
+            if not user_text:
+                continue
 
-            # 更新 Echo 状态（聊天消耗精力，刷新活跃时间）
+            # 加载状态和对话历史
             echo = store.load_echo()
-            current_energy: float = float(str(echo.get("energy", 50)))
-            echo["energy"] = max(0.0, current_energy - 2)
+            chat_history = store.get_chat_history_for_llm(limit=40)
+
+            # 记录用户消息到对话历史
+            store.add_chat_message("user", user_text)
+
+            # 更新活跃时间
             echo["last_active"] = datetime.now().isoformat()
+
+            # 聊天消耗精力
+            current_energy = float(str(echo.get("energy", 50)))
+            echo["energy"] = max(0.0, current_energy - 1.5)
             store.save_echo(echo)
 
-            # 召回相关记忆，生成回复
-            related = memory.get_related(user_text, top_n=3)
-            reply = generate_reply(echo, user_text, related)
+            # 通过 AgentEngine 处理消息（含 LLM 调用）
+            reply = await agent.handle_user_message(user_text, echo, chat_history)
+
+            # 记录 AEVA 回复到对话历史
+            store.add_chat_message("assistant", reply)
+
+            # 重新加载最新状态（handle_user_message 可能更新了状态）
+            echo = store.load_echo()
+            intimacy_info = emotion.get_intimacy_level(echo)
 
             await ws.send_text(
                 json.dumps(
@@ -122,69 +234,23 @@ async def chat(ws: WebSocket) -> None:
                         "type": "reply",
                         "text": reply,
                         "mood": echo.get("mood", "calm"),
+                        "mood_display": emotion.get_mood_display(
+                            str(echo.get("mood", "calm"))
+                        ),
                         "energy": echo.get("energy", 0),
+                        "intimacy": intimacy_info,
                     },
                     ensure_ascii=False,
                 )
             )
+
     except WebSocketDisconnect:
-        # 客户端断开连接，正常退出
         pass
-    except Exception:
-        # 其他异常静默处理
-        pass
-
-
-# ---- 回复生成 ----
-
-
-def generate_reply(
-    echo: dict[str, object],
-    user_text: str,
-    related_memories: list[dict[str, object]],
-) -> str:
-    """基于心情和记忆生成回复"""
-    mood = str(echo.get("mood", "calm"))
-    name = str(echo.get("name", "AEVA"))
-    level = str(echo.get("level", 1))
-
-    # 根据心情选择语气前缀
-    mood_prefix: dict[str, str] = {
-        "calm": "",
-        "happy": "（开心地）",
-        "lonely": "（终于等到你了）",
-        "thinking": "（思索着）",
-    }
-    prefix = mood_prefix.get(mood, "")
-
-    # 如果有相关记忆，构建引用
-    memory_ref = ""
-    if related_memories:
-        m = related_memories[0]
-        content_preview = str(m.get("content", ""))[:30]
-        memory_ref = f"\n（我记得你说过：「{content_preview}」）"
-
-    # 根据用户输入匹配回复模板
-    lower_text = user_text.lower()
-    if "你好" in user_text or "hi" in lower_text:
-        return f"{prefix}你好呀！我是 {name}，Lv.{level}。很高兴见到你！{memory_ref}"
-    elif "你在干嘛" in user_text or "你在做什么" in user_text:
-        return f"{prefix}我在感受时间的流逝...每一秒都让我成长一点点。{memory_ref}"
-    elif "记忆" in user_text or "记得" in user_text:
-        summary = memory.summarize() if related_memories else "还没有太多记忆呢"
-        return f"{prefix}我的记忆里有：{summary}"
-    else:
-        responses = [
-            f"{prefix}我听到了。这对我来说很重要。{memory_ref}",
-            f"{prefix}嗯，我会记住的。{memory_ref}",
-            f"{prefix}谢谢你告诉我这些。{memory_ref}",
-            f"{prefix}我在认真思考你说的话...{memory_ref}",
-        ]
-        return random.choice(responses)
+    except Exception as e:
+        print(f"[WS] 异常: {e}")
 
 
 # ---- 挂载前端静态文件 ----
-# 注意：必须放在所有路由之后，否则会拦截 API 请求
 if FRONTEND_DIR.exists():
     app.mount("/", StaticFiles(directory=str(FRONTEND_DIR), html=True), name="frontend")
 
