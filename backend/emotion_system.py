@@ -155,10 +155,10 @@ class EmotionSystem:
             transitions["sleepy"] = max(0, transitions.get("sleepy", 0) - 10)
 
         # 长时间无人互动 → 增加 lonely
-        if delta_seconds > 1800:  # 超过 30 分钟
-            transitions["lonely"] = transitions.get("lonely", 0) + 20
-        elif delta_seconds > 3600:  # 超过 1 小时
+        if delta_seconds > 3600:  # 超过 1 小时
             transitions["lonely"] = transitions.get("lonely", 0) + 40
+        elif delta_seconds > 1800:  # 超过 30 分钟
+            transitions["lonely"] = transitions.get("lonely", 0) + 20
 
         # 按权重随机选择
         return self._weighted_choice(transitions)
