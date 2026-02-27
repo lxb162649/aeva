@@ -26,6 +26,9 @@ from agent_engine import AgentEngine, ACTIVITIES
 from time_engine import TimeEngine
 from llm_client import LLMClient
 from file_access import FileAccess
+from logger import get_logger
+
+log = get_logger("Server")
 
 # ---- 路径配置 ----
 BASE_DIR = Path("/home/lxb/桌面/aeva")
@@ -57,7 +60,7 @@ async def autonomous_loop() -> None:
         try:
             await agent.run_autonomous_cycle()
         except Exception as e:
-            print(f"[AutoLoop] 自主行为异常: {e}")
+            log.error("自主行为异常: %s", e)
 
 
 # ---- FastAPI 生命周期 ----
@@ -88,8 +91,8 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         store.save_echo(echo)
         await agent.run_autonomous_cycle()
 
-    print(
-        f"[AEVA] 服务已启动 | LLM: {'已启用' if llm.enabled else '未配置'} | 端口: 19260"
+    log.info(
+        "服务已启动 | LLM: %s | 端口: 19260", "已启用" if llm.enabled else "未配置"
     )
 
     yield
@@ -98,7 +101,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     engine.stop()
     if autonomous_task:
         autonomous_task.cancel()
-    print("[AEVA] 服务已停止")
+    log.info("服务已停止")
 
 
 # ---- FastAPI 应用 ----
@@ -396,9 +399,9 @@ async def chat(ws: WebSocket) -> None:
             )
 
     except WebSocketDisconnect:
-        pass
+        log.debug("WebSocket 客户端断开")
     except Exception as e:
-        print(f"[WS] 异常: {e}")
+        log.error("WebSocket 异常: %s", e)
 
 
 # ---- 挂载前端静态文件 ----

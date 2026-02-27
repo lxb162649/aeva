@@ -8,6 +8,10 @@ from pathlib import Path
 from datetime import datetime
 from typing import Optional
 
+from logger import get_logger
+
+log = get_logger("FileAccess")
+
 
 # ---- 安全配置 ----
 PROJECT_ROOT = Path("/home/lxb/桌面/aeva")
@@ -265,7 +269,7 @@ class FileAccess:
             shutil.copy2(path, backup_path)
             return str(backup_path)
         except Exception as e:
-            print(f"[FileAccess] 备份失败: {e}")
+            log.error("备份失败: %s", e)
             return ""
 
     def _restore_backup(self, backup_path: str, target: Path) -> bool:
@@ -313,7 +317,7 @@ class FileAccess:
                 encoding="utf-8",
             )
         except Exception as e:
-            print(f"[FileAccess] 写入升级日志失败: {e}")
+            log.error("写入升级日志失败: %s", e)
 
     def get_upgrade_history(self, limit: int = 20) -> list[dict]:
         """获取最近的升级记录"""
@@ -385,7 +389,7 @@ class FileAccess:
                 log_result.stdout.strip() if log_result.returncode == 0 else ""
             )
 
-            print(f"[FileAccess] Git 提交成功: {commit_hash} - {commit_msg}")
+            log.info("Git 提交成功: %s - %s", commit_hash, commit_msg)
             return {
                 "success": True,
                 "error": "",

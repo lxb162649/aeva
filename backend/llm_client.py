@@ -7,6 +7,10 @@ import json
 import httpx
 from typing import Optional
 
+from logger import get_logger
+
+log = get_logger("LLM")
+
 # ---- 配置 ----
 # 优先从环境变量读取，支持多种 LLM 后端
 LLM_API_KEY: str = os.getenv("LLM_API_KEY", "")
@@ -31,9 +35,9 @@ class LLMClient:
         self.enabled = bool(self.api_key)
 
         if not self.enabled:
-            print("[LLM] 未配置 LLM_API_KEY，将使用本地规则回复")
+            log.warning("未配置 LLM_API_KEY，将使用本地规则回复")
         else:
-            print(f"[LLM] 已启用 LLM: {self.model} @ {self.base_url}")
+            log.info("已启用 LLM: %s @ %s", self.model, self.base_url)
 
     def build_system_prompt(
         self,
@@ -180,15 +184,15 @@ class LLMClient:
                 return None
 
         except httpx.TimeoutException:
-            print(f"[LLM] 请求超时 ({LLM_TIMEOUT}s)")
+            log.warning("请求超时 (%ds)", LLM_TIMEOUT)
             return None
         except httpx.HTTPStatusError as e:
-            print(
-                f"[LLM] HTTP 错误: {e.response.status_code} - {e.response.text[:200]}"
+            log.error(
+                "HTTP 错误: %d - %s", e.response.status_code, e.response.text[:200]
             )
             return None
         except Exception as e:
-            print(f"[LLM] 调用异常: {e}")
+            log.error("调用异常: %s", e)
             return None
 
     async def generate_thought(
@@ -237,5 +241,5 @@ class LLMClient:
                     return content.strip() if content else None
                 return None
         except Exception as e:
-            print(f"[LLM] 自主思考生成失败: {e}")
+            log.error("自主思考生成失败: %s", e)
             return None

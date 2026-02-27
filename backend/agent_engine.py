@@ -14,6 +14,9 @@ from memory_system import MemorySystem
 from emotion_system import EmotionSystem
 from llm_client import LLMClient
 from file_access import FileAccess
+from logger import get_logger
+
+log = get_logger("Agent")
 
 
 # ---- 活动类型定义 ----
@@ -687,7 +690,7 @@ class AgentEngine:
                 )
                 return f"审视了自己的内在结构，{thought}"
         except Exception as e:
-            print(f"[Agent] 自我审视失败: {e}")
+            log.error("自我审视失败: %s", e)
 
         return None
 
@@ -790,7 +793,7 @@ class AgentEngine:
 
             file_content = str(read_result.get("content", ""))
             if search_text not in file_content:
-                print(f"[Agent] 升级失败：在 {target_file} 中找不到要替换的代码片段")
+                log.warning("升级失败：在 %s 中找不到要替换的代码片段", target_file)
                 return None
 
             # 第三步：执行替换
@@ -799,7 +802,7 @@ class AgentEngine:
             # 基本安全检查：确认修改幅度不过大
             diff_len = abs(len(new_content) - len(file_content))
             if diff_len > 2000:
-                print(f"[Agent] 升级被拒绝：修改幅度过大 ({diff_len} chars)")
+                log.warning("升级被拒绝：修改幅度过大 (%d chars)", diff_len)
                 return None
 
             # 写入
@@ -807,16 +810,16 @@ class AgentEngine:
                 target_file, new_content, description
             )
             if not write_result.get("success"):
-                print(f"[Agent] 写入失败: {write_result.get('error')}")
+                log.error("写入失败: %s", write_result.get("error"))
                 return None
 
             # 自动 git commit（让每次自我升级都有版本记录）
             commit_result = self.file_access.git_commit(target_file, description)
             if commit_result.get("success"):
                 commit_hash = commit_result.get("commit_hash", "")
-                print(f"[Agent] 自我升级已提交: {commit_hash}")
+                log.info("自我升级已提交: %s", commit_hash)
             else:
-                print(f"[Agent] Git 提交失败: {commit_result.get('error', '')}")
+                log.warning("Git 提交失败: %s", commit_result.get("error", ""))
 
             # 记为重要记忆
             self.memory.add_memory(
@@ -832,10 +835,10 @@ class AgentEngine:
             return f"完成了一次自我升级：{description}"
 
         except _json.JSONDecodeError:
-            print("[Agent] 升级计划解析失败：LLM 返回的不是有效 JSON")
+            log.warning("升级计划解析失败：LLM 返回的不是有效 JSON")
             return None
         except Exception as e:
-            print(f"[Agent] 自我进化异常: {e}")
+            log.error("自我进化异常: %s", e)
             return None
 
     # ============================================================
@@ -972,13 +975,13 @@ class AgentEngine:
 
             file_content = str(read_result.get("content", ""))
             if search_text not in file_content:
-                print(f"[Agent] 自学习改进失败：代码片段未找到")
+                log.warning("自学习改进失败：代码片段未找到")
                 return
 
             new_content = file_content.replace(search_text, replace_text, 1)
             diff_len = abs(len(new_content) - len(file_content))
             if diff_len > 1000:
-                print(f"[Agent] 自学习改进被拒绝：修改幅度过大 ({diff_len} chars)")
+                log.warning("自学习改进被拒绝：修改幅度过大 (%d chars)", diff_len)
                 return
 
             write_result = self.file_access.write_file(
@@ -992,9 +995,7 @@ class AgentEngine:
                 target_file, f"自学习: {description}"
             )
             if commit_result.get("success"):
-                print(
-                    f"[Agent] 自学习改进已提交: {commit_result.get('commit_hash', '')}"
-                )
+                log.info("自学习改进已提交: %s", commit_result.get("commit_hash", ""))
 
             # 记入记忆
             self.memory.add_memory(
@@ -1010,7 +1011,7 @@ class AgentEngine:
         except _json.JSONDecodeError:
             pass  # LLM 返回格式不对，静默跳过
         except Exception as e:
-            print(f"[Agent] 自学习闭环异常: {e}")
+            log.error("自学习闭环异常: %s", e)
 
     # ============================================================
     # 工具方法

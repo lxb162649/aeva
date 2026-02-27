@@ -10,6 +10,9 @@ from uuid import uuid4
 from typing import Optional
 
 from models import DataStore
+from logger import get_logger
+
+log = get_logger("Memory")
 
 
 # ---- 记忆层级定义 ----
@@ -241,6 +244,13 @@ class MemorySystem:
 
         # 写回存储
         self.store._write_json(self.store.memories_path, surviving)
+        if stats["forgotten"] > 0:
+            log.debug(
+                "遗忘曲线: 遗忘 %d 条, 弱化 %d 条, 总计 %d 条",
+                stats["forgotten"],
+                stats["weakened"],
+                stats["total"],
+            )
         return stats
 
     def _reinforce_memories(self, memories: list[dict[str, object]]) -> None:
@@ -313,6 +323,13 @@ class MemorySystem:
                 stats["pruned"] += before_len - len(memories)
 
         self.store._write_json(self.store.memories_path, memories)
+        if stats["promoted_to_long"] or stats["promoted_to_core"] or stats["pruned"]:
+            log.debug(
+                "记忆整合: 晋升长期 %d, 晋升核心 %d, 裁剪 %d",
+                stats["promoted_to_long"],
+                stats["promoted_to_core"],
+                stats["pruned"],
+            )
         return stats
 
     # ============================================================

@@ -7,6 +7,10 @@ from pathlib import Path
 from datetime import datetime
 from uuid import uuid4
 
+from logger import get_logger
+
+log = get_logger("DataStore")
+
 
 # 默认 Echo 实体（新增 intimacy / emotion_memory / activity 字段）
 DEFAULT_ECHO: dict[str, object] = {

@@ -7,6 +7,9 @@ from datetime import datetime
 
 from models import DataStore
 from emotion_system import EmotionSystem
+from logger import get_logger
+
+log = get_logger("TimeEngine")
 
 
 class TimeEngine:

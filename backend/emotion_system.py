@@ -9,6 +9,9 @@ from uuid import uuid4
 from typing import Optional
 
 from models import DataStore
+from logger import get_logger
+
+log = get_logger("Emotion")
 
 
 # ---- 心情类型定义 ----
