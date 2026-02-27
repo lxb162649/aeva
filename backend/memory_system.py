@@ -52,6 +52,7 @@ class MemorySystem:
 
     def __init__(self, store: DataStore) -> None:
         self.store = store
+        self._migrate_old_memories()
 
     # ============================================================
     # 添加记忆
@@ -467,3 +468,23 @@ class MemorySystem:
         elif neg_count > pos_count:
             return "negative"
         return "neutral"
+
+    def _migrate_old_memories(self) -> None:
+        """迁移旧版记忆数据，补充 v2 新字段"""
+        memories = self.store.get_memories()
+        changed = False
+
+        for m in memories:
+            if "layer" not in m:
+                m["layer"] = "short_term"
+                m["strength"] = 0.8
+                m["recall_count"] = 0
+                m["last_recall_time"] = None
+                m["source"] = "user"
+                m["emotional_valence"] = "neutral"
+                if "type" not in m:
+                    m["type"] = "conversation"
+                changed = True
+
+        if changed:
+            self.store._write_json(self.store.memories_path, memories)
