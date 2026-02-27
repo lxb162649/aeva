@@ -2,6 +2,12 @@
 # 整合 LLM 对话、情感系统、分层记忆、增强自主行为
 # 提供 REST API、WebSocket 聊天、静态文件服务
 
+# 加载 .env 环境变量（必须在其他模块导入之前）
+from dotenv import load_dotenv
+from pathlib import Path as _Path
+
+load_dotenv(_Path(__file__).resolve().parent.parent / ".env")
+
 import asyncio
 import json
 from datetime import datetime
