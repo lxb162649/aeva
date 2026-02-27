@@ -1,5 +1,6 @@
 /* ============================================================
-   AEVA Digital Life - 赛博朋克终端主题
+   AEVA Digital Life v2 - 赛博朋克终端主题
+   新增：7种心情色彩、亲密度面板、记忆分层、打字机效果
    ============================================================ */
 
 /* ---- CSS 变量 ---- */
@@ -11,14 +12,21 @@
   --text-secondary: #8888aa;
   --accent: #6366f1;
 
+  /* 7 种心情色彩 */
   --mood-calm: #6366f1;
   --mood-happy: #10b981;
   --mood-lonely: #f59e0b;
   --mood-thinking: #8b5cf6;
+  --mood-excited: #f43f5e;
+  --mood-sleepy: #64748b;
+  --mood-curious: #06b6d4;
+
+  /* 记忆层级色 */
+  --memory-core: #f43f5e;
+  --memory-long: #8b5cf6;
+  --memory-short: #6366f1;
 
   --border: #2a2a3e;
-  --glow-spread: 60px;
-
   --font-mono: "JetBrains Mono", "Fira Code", "SF Mono", "Cascadia Code",
     "Consolas", "Liberation Mono", monospace;
 }
@@ -45,22 +53,10 @@ body {
 }
 
 /* ---- 滚动条 ---- */
-::-webkit-scrollbar {
-  width: 4px;
-}
-
-::-webkit-scrollbar-track {
-  background: transparent;
-}
-
-::-webkit-scrollbar-thumb {
-  background: var(--border);
-  border-radius: 2px;
-}
-
-::-webkit-scrollbar-thumb:hover {
-  background: var(--accent);
-}
+::-webkit-scrollbar { width: 4px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
+::-webkit-scrollbar-thumb:hover { background: var(--accent); }
 
 /* ============================================================
    三栏布局
@@ -80,7 +76,6 @@ body {
   overflow: hidden;
 }
 
-/* ---- 面板通用 ---- */
 .panel-section {
   display: flex;
   flex-direction: column;
@@ -166,6 +161,17 @@ body {
   color: var(--text-primary);
 }
 
+/* -- 活动状态 -- */
+.activity-display {
+  font-size: 11px;
+  color: var(--text-secondary);
+  margin-bottom: 10px;
+  padding: 4px 8px;
+  background: var(--bg-secondary);
+  border-radius: 4px;
+  text-align: center;
+}
+
 /* -- 进度条 -- */
 .progress-bar {
   width: 100%;
@@ -194,6 +200,25 @@ body {
   box-shadow: 0 0 8px rgba(139, 92, 246, 0.3);
 }
 
+/* -- 亲密度条 -- */
+.intimacy-fill {
+  background: linear-gradient(90deg, var(--mood-excited), #fb923c);
+  box-shadow: 0 0 8px rgba(244, 63, 94, 0.3);
+}
+
+.intimacy-info {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 4px;
+}
+
+.intimacy-title {
+  font-size: 11px;
+  color: var(--mood-excited);
+  font-weight: 600;
+}
+
 /* -- 存活时间 -- */
 .life-timer {
   font-size: 26px;
@@ -213,9 +238,7 @@ body {
   flex-direction: column;
 }
 
-.logs-section .section-header {
-  flex-shrink: 0;
-}
+.logs-section .section-header { flex-shrink: 0; }
 
 .life-logs {
   flex: 1;
@@ -257,6 +280,13 @@ body {
   line-height: 1.5;
 }
 
+.log-mood-tag {
+  display: inline-block;
+  font-size: 10px;
+  margin-left: 4px;
+  opacity: 0.7;
+}
+
 .log-empty,
 .memory-empty {
   color: var(--text-secondary);
@@ -282,7 +312,6 @@ body {
   );
 }
 
-/* -- 光球容器 -- */
 .orb-container {
   position: relative;
   width: 280px;
@@ -310,20 +339,10 @@ body {
 }
 
 @keyframes particleFloat {
-  0% {
-    opacity: 0;
-    transform: translateY(0) scale(1);
-  }
-  20% {
-    opacity: 0.6;
-  }
-  80% {
-    opacity: 0.2;
-  }
-  100% {
-    opacity: 0;
-    transform: translateY(-80px) scale(0.5);
-  }
+  0% { opacity: 0; transform: translateY(0) scale(1); }
+  20% { opacity: 0.6; }
+  80% { opacity: 0.2; }
+  100% { opacity: 0; transform: translateY(-80px) scale(0.5); }
 }
 
 /* -- 光球本体 -- */
@@ -339,20 +358,11 @@ body {
   transition: box-shadow 1.5s ease, background 1.5s ease;
 }
 
-/* 呼吸动画 */
 @keyframes orbBreathe {
-  0%,
-  100% {
-    transform: scale(1);
-    opacity: 1;
-  }
-  50% {
-    transform: scale(1.06);
-    opacity: 0.85;
-  }
+  0%, 100% { transform: scale(1); opacity: 1; }
+  50% { transform: scale(1.06); opacity: 0.85; }
 }
 
-/* 内核 */
 .orb-core {
   width: 80px;
   height: 80px;
@@ -366,17 +376,10 @@ body {
 }
 
 @keyframes coreGlow {
-  0% {
-    opacity: 0.6;
-    transform: scale(0.9);
-  }
-  100% {
-    opacity: 1;
-    transform: scale(1.1);
-  }
+  0% { opacity: 0.6; transform: scale(0.9); }
+  100% { opacity: 1; transform: scale(1.1); }
 }
 
-/* 光环 */
 .orb-ring {
   position: absolute;
   border-radius: 50%;
@@ -399,74 +402,50 @@ body {
 }
 
 @keyframes ringRotate {
-  from {
-    transform: rotate(0deg);
-  }
-  to {
-    transform: rotate(360deg);
-  }
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
 }
 
-/* ---- 心情色彩 ---- */
+/* ---- 7 种心情色彩 ---- */
 
-/* 平静 - 蓝紫 */
 .mood-calm {
-  background: radial-gradient(
-    circle at 45% 45%,
-    rgba(99, 102, 241, 0.6),
-    rgba(99, 102, 241, 0.15) 60%,
-    transparent 75%
-  );
-  box-shadow:
-    0 0 30px rgba(99, 102, 241, 0.3),
-    0 0 60px rgba(99, 102, 241, 0.15),
-    0 0 100px rgba(99, 102, 241, 0.08),
-    inset 0 0 40px rgba(99, 102, 241, 0.15);
+  background: radial-gradient(circle at 45% 45%, rgba(99,102,241,0.6), rgba(99,102,241,0.15) 60%, transparent 75%);
+  box-shadow: 0 0 30px rgba(99,102,241,0.3), 0 0 60px rgba(99,102,241,0.15), 0 0 100px rgba(99,102,241,0.08), inset 0 0 40px rgba(99,102,241,0.15);
 }
 
-/* 愉快 - 绿 */
 .mood-happy {
-  background: radial-gradient(
-    circle at 45% 45%,
-    rgba(16, 185, 129, 0.6),
-    rgba(16, 185, 129, 0.15) 60%,
-    transparent 75%
-  );
-  box-shadow:
-    0 0 30px rgba(16, 185, 129, 0.3),
-    0 0 60px rgba(16, 185, 129, 0.15),
-    0 0 100px rgba(16, 185, 129, 0.08),
-    inset 0 0 40px rgba(16, 185, 129, 0.15);
+  background: radial-gradient(circle at 45% 45%, rgba(16,185,129,0.6), rgba(16,185,129,0.15) 60%, transparent 75%);
+  box-shadow: 0 0 30px rgba(16,185,129,0.3), 0 0 60px rgba(16,185,129,0.15), 0 0 100px rgba(16,185,129,0.08), inset 0 0 40px rgba(16,185,129,0.15);
 }
 
-/* 想念 - 橙黄 */
 .mood-lonely {
-  background: radial-gradient(
-    circle at 45% 45%,
-    rgba(245, 158, 11, 0.6),
-    rgba(245, 158, 11, 0.15) 60%,
-    transparent 75%
-  );
-  box-shadow:
-    0 0 30px rgba(245, 158, 11, 0.3),
-    0 0 60px rgba(245, 158, 11, 0.15),
-    0 0 100px rgba(245, 158, 11, 0.08),
-    inset 0 0 40px rgba(245, 158, 11, 0.15);
+  background: radial-gradient(circle at 45% 45%, rgba(245,158,11,0.6), rgba(245,158,11,0.15) 60%, transparent 75%);
+  box-shadow: 0 0 30px rgba(245,158,11,0.3), 0 0 60px rgba(245,158,11,0.15), 0 0 100px rgba(245,158,11,0.08), inset 0 0 40px rgba(245,158,11,0.15);
 }
 
-/* 思考 - 紫 */
 .mood-thinking {
-  background: radial-gradient(
-    circle at 45% 45%,
-    rgba(139, 92, 246, 0.6),
-    rgba(139, 92, 246, 0.15) 60%,
-    transparent 75%
-  );
-  box-shadow:
-    0 0 30px rgba(139, 92, 246, 0.3),
-    0 0 60px rgba(139, 92, 246, 0.15),
-    0 0 100px rgba(139, 92, 246, 0.08),
-    inset 0 0 40px rgba(139, 92, 246, 0.15);
+  background: radial-gradient(circle at 45% 45%, rgba(139,92,246,0.6), rgba(139,92,246,0.15) 60%, transparent 75%);
+  box-shadow: 0 0 30px rgba(139,92,246,0.3), 0 0 60px rgba(139,92,246,0.15), 0 0 100px rgba(139,92,246,0.08), inset 0 0 40px rgba(139,92,246,0.15);
+}
+
+/* 兴奋 - 玫红 */
+.mood-excited {
+  background: radial-gradient(circle at 45% 45%, rgba(244,63,94,0.6), rgba(244,63,94,0.15) 60%, transparent 75%);
+  box-shadow: 0 0 30px rgba(244,63,94,0.3), 0 0 60px rgba(244,63,94,0.15), 0 0 100px rgba(244,63,94,0.08), inset 0 0 40px rgba(244,63,94,0.15);
+  animation: orbBreathe 2.5s ease-in-out infinite; /* 兴奋时呼吸更快 */
+}
+
+/* 困倦 - 灰蓝 */
+.mood-sleepy {
+  background: radial-gradient(circle at 45% 45%, rgba(100,116,139,0.5), rgba(100,116,139,0.1) 60%, transparent 75%);
+  box-shadow: 0 0 20px rgba(100,116,139,0.2), 0 0 40px rgba(100,116,139,0.1), inset 0 0 30px rgba(100,116,139,0.1);
+  animation: orbBreathe 6s ease-in-out infinite; /* 困倦时呼吸更慢 */
+}
+
+/* 好奇 - 青色 */
+.mood-curious {
+  background: radial-gradient(circle at 45% 45%, rgba(6,182,212,0.6), rgba(6,182,212,0.15) 60%, transparent 75%);
+  box-shadow: 0 0 30px rgba(6,182,212,0.3), 0 0 60px rgba(6,182,212,0.15), 0 0 100px rgba(6,182,212,0.08), inset 0 0 40px rgba(6,182,212,0.15);
 }
 
 /* -- 状态文字 -- */
@@ -515,13 +494,8 @@ body {
 }
 
 @keyframes connBlink {
-  0%,
-  100% {
-    opacity: 1;
-  }
-  50% {
-    opacity: 0.3;
-  }
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.3; }
 }
 
 /* ============================================================
@@ -549,7 +523,6 @@ body {
   gap: 10px;
 }
 
-/* 消息容器 */
 .message {
   display: flex;
   max-width: 90%;
@@ -566,7 +539,6 @@ body {
   justify-content: flex-start;
 }
 
-/* 气泡 */
 .message-bubble {
   padding: 8px 12px;
   border-radius: 10px;
@@ -590,14 +562,31 @@ body {
 }
 
 @keyframes fadeSlideIn {
-  from {
-    opacity: 0;
-    transform: translateY(8px);
-  }
-  to {
-    opacity: 1;
-    transform: translateY(0);
-  }
+  from { opacity: 0; transform: translateY(8px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+/* -- 打字机效果 -- */
+.typing-indicator {
+  display: inline-flex;
+  gap: 3px;
+  padding: 8px 12px;
+}
+
+.typing-dot {
+  width: 6px;
+  height: 6px;
+  background: var(--text-secondary);
+  border-radius: 50%;
+  animation: typingBounce 1.2s ease-in-out infinite;
+}
+
+.typing-dot:nth-child(2) { animation-delay: 0.15s; }
+.typing-dot:nth-child(3) { animation-delay: 0.3s; }
+
+@keyframes typingBounce {
+  0%, 60%, 100% { transform: translateY(0); opacity: 0.4; }
+  30% { transform: translateY(-6px); opacity: 1; }
 }
 
 /* 输入区 */
@@ -623,11 +612,7 @@ body {
   transition: border-color 0.2s;
 }
 
-.chat-input::placeholder {
-  color: var(--text-secondary);
-  opacity: 0.6;
-}
-
+.chat-input::placeholder { color: var(--text-secondary); opacity: 0.6; }
 .chat-input:focus {
   border-color: var(--accent);
   box-shadow: 0 0 0 2px rgba(99, 102, 241, 0.15);
@@ -653,8 +638,10 @@ body {
   box-shadow: 0 0 12px rgba(99, 102, 241, 0.3);
 }
 
-.chat-send-btn:active {
-  transform: scale(0.96);
+.chat-send-btn:active { transform: scale(0.96); }
+.chat-send-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
 }
 
 /* -- 记忆区 -- */
@@ -682,6 +669,20 @@ body {
   animation: fadeSlideIn 0.3s ease;
 }
 
+/* 记忆分层颜色 */
+.memory-item.memory-core {
+  border-left-color: var(--memory-core);
+  background: rgba(244, 63, 94, 0.05);
+}
+
+.memory-item.memory-long {
+  border-left-color: var(--memory-long);
+}
+
+.memory-item.memory-short {
+  border-left-color: var(--memory-short);
+}
+
 .memory-content {
   font-size: 11px;
   color: var(--text-primary);
@@ -692,10 +693,36 @@ body {
 .memory-meta {
   font-size: 10px;
   color: var(--text-secondary);
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.memory-layer-tag {
+  font-size: 9px;
+  padding: 1px 5px;
+  border-radius: 3px;
+  font-weight: 600;
+  letter-spacing: 0.5px;
+}
+
+.memory-layer-tag.tag-core {
+  background: rgba(244, 63, 94, 0.15);
+  color: var(--memory-core);
+}
+
+.memory-layer-tag.tag-long {
+  background: rgba(139, 92, 246, 0.15);
+  color: var(--memory-long);
+}
+
+.memory-layer-tag.tag-short {
+  background: rgba(99, 102, 241, 0.15);
+  color: var(--memory-short);
 }
 
 /* ============================================================
-   额外背景装饰：扫描线 + 噪点
+   扫描线 + 噪点
    ============================================================ */
 body::before {
   content: "";
@@ -713,21 +740,16 @@ body::before {
 }
 
 /* ============================================================
-   响应式：窄屏幕单栏
+   响应式
    ============================================================ */
 @media (max-width: 900px) {
   .app {
     grid-template-columns: 1fr;
     grid-template-rows: auto 300px auto;
   }
-
-  .panel-left,
-  .panel-right {
+  .panel-left, .panel-right {
     border: none;
     border-bottom: 1px solid var(--border);
   }
-
-  .panel-center {
-    min-height: 300px;
-  }
+  .panel-center { min-height: 300px; }
 }

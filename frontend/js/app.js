@@ -1,9 +1,11 @@
 /* ============================================================
-   AEVA Digital Life - 前端逻辑
+   AEVA Digital Life v2 - 前端逻辑
+   新增：打字机效果、亲密度展示、记忆分层、新心情粒子
    ============================================================ */
 
 const API = "http://127.0.0.1:19260";
 let ws = null;
+let isSending = false;
 
 // ============================================================
 // 初始化
@@ -15,9 +17,9 @@ document.addEventListener("DOMContentLoaded", () => {
   connectChat();
   initParticles();
 
-  // 每 10 秒刷新状态
+  // 定时刷新
   setInterval(loadStatus, 10000);
-  // 每秒更新存活时间
+  setInterval(loadLogs, 30000);
   setInterval(updateLifeTimer, 1000);
 });
 
@@ -32,6 +34,7 @@ async function loadStatus() {
     updateStatusPanel(data);
     updateLifeOrb(data.mood);
     updateStatusText(data);
+    updateParticleColor(data.mood);
   } catch (err) {
     console.error("[loadStatus] 请求失败:", err);
   }
@@ -45,28 +48,37 @@ function updateStatusPanel(echo) {
   document.getElementById("echoName").textContent = echo.name || "AEVA";
   document.getElementById("echoLevel").textContent = "Lv." + (echo.level || 1);
 
-  // 心情（中文 + emoji）
-  const moodMap = {
-    calm: "\u{1F60C} 平静",
-    happy: "\u{1F60A} 愉快",
-    lonely: "\u{1F97A} 想念你",
-    thinking: "\u{1F914} 思考中",
-  };
-  document.getElementById("echoMood").textContent =
-    moodMap[echo.mood] || echo.mood || "--";
+  // 心情
+  const moodDisplay = echo.mood_display || {};
+  const moodText = moodDisplay.emoji
+    ? `${moodDisplay.emoji} ${moodDisplay.zh || echo.mood}`
+    : echo.mood || "--";
+  document.getElementById("echoMood").textContent = moodText;
+
+  // 活动状态
+  const actDisplay = echo.activity_display || {};
+  const actEmoji = actDisplay.emoji || "⏳";
+  const actZh = actDisplay.zh || "等待中";
+  document.getElementById("activityDisplay").textContent = `${actEmoji} ${actZh}`;
 
   // 精力条
   const energy = Math.max(0, Math.min(100, echo.energy || 0));
   document.getElementById("energyFill").style.width = energy + "%";
-  document.getElementById("energyText").textContent =
-    Math.round(energy) + "/100";
+  document.getElementById("energyText").textContent = Math.round(energy) + "/100";
 
   // 经验条
   const expMax = (echo.level || 1) * 100;
   const expPct = Math.max(0, Math.min(100, ((echo.exp || 0) / expMax) * 100));
   document.getElementById("expFill").style.width = expPct + "%";
+  document.getElementById("expText").textContent = `${echo.exp || 0}/${expMax}`;
 
-  // 保存总存活秒数，供计时器使用
+  // 亲密度
+  const intimacy = echo.intimacy_info || {};
+  document.getElementById("intimacyTitle").textContent = intimacy.title || "初识";
+  const intimacyPct = Math.max(0, Math.min(100, (intimacy.progress || 0) * 100));
+  document.getElementById("intimacyFill").style.width = intimacyPct + "%";
+
+  // 存活时间
   window._totalLifeSeconds = echo.total_life_seconds || 0;
   window._lastStatusTime = Date.now();
 }
@@ -76,21 +88,36 @@ function updateStatusPanel(echo) {
 // ============================================================
 function updateLifeOrb(mood) {
   const orb = document.getElementById("lifeOrb");
-  // 清除所有 mood- 类名，保留 life-orb
   orb.className = "life-orb mood-" + (mood || "calm");
 }
 
 // ============================================================
-// 更新状态文字（从最新日志或回退文案）
+// 更新粒子颜色（跟随心情）
+// ============================================================
+function updateParticleColor(mood) {
+  const colorMap = {
+    calm: "#6366f1",
+    happy: "#10b981",
+    lonely: "#f59e0b",
+    thinking: "#8b5cf6",
+    excited: "#f43f5e",
+    sleepy: "#64748b",
+    curious: "#06b6d4",
+  };
+  const color = colorMap[mood] || colorMap.calm;
+  const particles = document.querySelectorAll(".particle");
+  particles.forEach((p) => { p.style.background = color; });
+}
+
+// ============================================================
+// 更新状态文字
 // ============================================================
 function updateStatusText(data) {
   const el = document.getElementById("statusText");
-  // 优先取 status_text 字段，否则从日志里取最新一条
   if (data.status_text) {
     el.textContent = data.status_text;
     return;
   }
-  // 回退：显示存活相关文案
   if (window._latestLogContent) {
     el.textContent = window._latestLogContent;
   }
@@ -112,10 +139,8 @@ function updateLifeTimer() {
   let text = "";
   if (days > 0) text += days + "天 ";
   text +=
-    String(hours).padStart(2, "0") +
-    ":" +
-    String(mins).padStart(2, "0") +
-    ":" +
+    String(hours).padStart(2, "0") + ":" +
+    String(mins).padStart(2, "0") + ":" +
     String(secs).padStart(2, "0");
 
   document.getElementById("lifeTimer").textContent = text;
@@ -139,7 +164,6 @@ function connectChat() {
   ws.onopen = () => {
     console.log("[WS] 已连接");
     setConnectionStatus("connected");
-    // 清除初始提示消息
     const container = document.getElementById("chatMessages");
     if (
       container.children.length === 1 &&
@@ -153,18 +177,34 @@ function connectChat() {
     try {
       const data = JSON.parse(event.data);
       if (data.type === "reply") {
-        addMessage("aeva", data.text);
-        // 更新心情与精力
+        // 移除打字指示器
+        removeTypingIndicator();
+        isSending = false;
+        document.getElementById("chatSendBtn").disabled = false;
+
+        // 打字机效果展示回复
+        typeMessage("aeva", data.text);
+
+        // 更新状态
         if (data.mood) {
           updateLifeOrb(data.mood);
+          updateParticleColor(data.mood);
+        }
+        if (data.mood_display) {
+          const moodText = `${data.mood_display.emoji} ${data.mood_display.zh}`;
+          document.getElementById("echoMood").textContent = moodText;
         }
         if (data.energy !== undefined) {
-          document.getElementById("energyFill").style.width =
-            data.energy + "%";
-          document.getElementById("energyText").textContent =
-            Math.round(data.energy) + "/100";
+          const e = Math.round(data.energy);
+          document.getElementById("energyFill").style.width = e + "%";
+          document.getElementById("energyText").textContent = e + "/100";
         }
-        // 聊天后刷新记忆
+        if (data.intimacy) {
+          document.getElementById("intimacyTitle").textContent = data.intimacy.title || "初识";
+          const pct = Math.max(0, Math.min(100, (data.intimacy.progress || 0) * 100));
+          document.getElementById("intimacyFill").style.width = pct + "%";
+        }
+
         loadMemories();
       }
     } catch (err) {
@@ -172,32 +212,22 @@ function connectChat() {
     }
   };
 
-  ws.onerror = (err) => {
-    console.error("[WS] 连接错误:", err);
-    setConnectionStatus("error");
-  };
-
+  ws.onerror = () => { setConnectionStatus("error"); };
   ws.onclose = () => {
-    console.log("[WS] 连接关闭，3秒后重连...");
     setConnectionStatus("error");
     ws = null;
     scheduleReconnect();
   };
 }
 
-/** 延迟重连 */
 function scheduleReconnect() {
-  setTimeout(() => {
-    connectChat();
-  }, 3000);
+  setTimeout(() => { connectChat(); }, 3000);
 }
 
-/** 更新底部连接状态指示器 */
 function setConnectionStatus(state) {
   const el = document.getElementById("connectionStatus");
   const textEl = el.querySelector(".conn-text");
   el.className = "connection-status";
-
   switch (state) {
     case "connected":
       el.classList.add("connected");
@@ -221,20 +251,26 @@ function setConnectionStatus(state) {
 function sendMessage() {
   const input = document.getElementById("chatInput");
   const text = input.value.trim();
-  if (!text) return;
+  if (!text || isSending) return;
 
   if (!ws || ws.readyState !== WebSocket.OPEN) {
     addMessage("aeva", "[连接已断开，正在重连...]");
     return;
   }
 
+  isSending = true;
+  document.getElementById("chatSendBtn").disabled = true;
   addMessage("user", text);
+  showTypingIndicator();
 
   try {
     ws.send(JSON.stringify({ text: text }));
   } catch (err) {
     console.error("[sendMessage] 发送失败:", err);
+    removeTypingIndicator();
     addMessage("aeva", "[消息发送失败，请稍后重试]");
+    isSending = false;
+    document.getElementById("chatSendBtn").disabled = false;
   }
 
   input.value = "";
@@ -242,7 +278,7 @@ function sendMessage() {
 }
 
 // ============================================================
-// 添加聊天气泡
+// 聊天气泡
 // ============================================================
 function addMessage(role, text) {
   const container = document.getElementById("chatMessages");
@@ -255,8 +291,63 @@ function addMessage(role, text) {
   div.appendChild(bubble);
 
   container.appendChild(div);
-  // 滚动到底部
   container.scrollTop = container.scrollHeight;
+}
+
+// ============================================================
+// 打字机效果
+// ============================================================
+function typeMessage(role, text) {
+  const container = document.getElementById("chatMessages");
+  const div = document.createElement("div");
+  div.className = "message message-" + role;
+
+  const bubble = document.createElement("div");
+  bubble.className = "message-bubble";
+  div.appendChild(bubble);
+  container.appendChild(div);
+
+  let i = 0;
+  const speed = Math.max(15, Math.min(40, 1200 / text.length)); // 自适应速度
+
+  function type() {
+    if (i < text.length) {
+      bubble.textContent += text.charAt(i);
+      i++;
+      container.scrollTop = container.scrollHeight;
+      setTimeout(type, speed);
+    }
+  }
+  type();
+}
+
+// ============================================================
+// 打字指示器
+// ============================================================
+function showTypingIndicator() {
+  const container = document.getElementById("chatMessages");
+  // 避免重复
+  if (document.getElementById("typingIndicator")) return;
+
+  const div = document.createElement("div");
+  div.className = "message message-aeva";
+  div.id = "typingIndicator";
+
+  const indicator = document.createElement("div");
+  indicator.className = "typing-indicator";
+  for (let i = 0; i < 3; i++) {
+    const dot = document.createElement("span");
+    dot.className = "typing-dot";
+    indicator.appendChild(dot);
+  }
+  div.appendChild(indicator);
+  container.appendChild(div);
+  container.scrollTop = container.scrollHeight;
+}
+
+function removeTypingIndicator() {
+  const el = document.getElementById("typingIndicator");
+  if (el) el.remove();
 }
 
 // ============================================================
@@ -268,40 +359,34 @@ async function loadLogs() {
     if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
     const data = await resp.json();
     const container = document.getElementById("lifeLogs");
+    const logs = data.logs || [];
 
-    if (!data.logs || data.logs.length === 0) {
-      container.innerHTML =
-        '<div class="log-empty">AEVA 刚刚诞生，还没有生命日志...</div>';
+    if (logs.length === 0) {
+      container.innerHTML = '<div class="log-empty">AEVA 刚刚诞生，还没有生命日志...</div>';
       return;
     }
 
-    // 最新的在最上面
-    const logs = data.logs.slice().reverse();
+    // 最新在最上面
+    const reversed = logs.slice().reverse();
     let html = "";
-    logs.forEach((log) => {
+    reversed.forEach((log) => {
       const time = formatTime(log.create_time);
+      const moodEmoji = log.mood_emoji || "";
       html +=
         '<div class="log-item">' +
-        '<div class="log-time">' +
-        escapeHtml(time) +
-        "</div>" +
-        '<div class="log-content">' +
-        escapeHtml(log.content) +
-        "</div>" +
-        "</div>";
+        '<div class="log-time">' + escapeHtml(time) +
+        (moodEmoji ? ' <span class="log-mood-tag">' + moodEmoji + '</span>' : '') +
+        '</div>' +
+        '<div class="log-content">' + escapeHtml(log.content) + '</div>' +
+        '</div>';
     });
     container.innerHTML = html;
 
-    // 缓存最新日志用于状态文字
-    if (logs.length > 0) {
-      window._latestLogContent = logs[0].content;
-      // 如果状态文字还是初始化文案就更新
+    if (reversed.length > 0) {
+      window._latestLogContent = reversed[0].content;
       const statusEl = document.getElementById("statusText");
-      if (
-        statusEl.textContent === "正在唤醒 AEVA..." ||
-        statusEl.textContent === ""
-      ) {
-        statusEl.textContent = logs[0].content;
+      if (statusEl.textContent === "正在唤醒 AEVA..." || statusEl.textContent === "") {
+        statusEl.textContent = reversed[0].content;
       }
     }
   } catch (err) {
@@ -310,7 +395,7 @@ async function loadLogs() {
 }
 
 // ============================================================
-// 加载记忆
+// 加载记忆（分层展示）
 // ============================================================
 async function loadMemories() {
   try {
@@ -318,27 +403,51 @@ async function loadMemories() {
     if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
     const data = await resp.json();
     const container = document.getElementById("memoryList");
+    const statsEl = document.getElementById("memoryStats");
 
-    if (!data.memories || data.memories.length === 0) {
-      container.innerHTML =
-        '<div class="memory-empty">还没有任何记忆...</div>';
+    const memories = data.memories || [];
+    const stats = data.stats || {};
+
+    // 更新统计
+    if (statsEl) {
+      statsEl.textContent = `${stats.total || 0}`;
+    }
+
+    if (memories.length === 0) {
+      container.innerHTML = '<div class="memory-empty">还没有任何记忆...</div>';
       return;
     }
 
-    // 显示最近 10 条，最新的在上面
-    const recent = data.memories.slice(-10).reverse();
+    // 层级标签映射
+    const layerMap = {
+      core: { label: "核心", class: "tag-core", itemClass: "memory-core" },
+      long_term: { label: "长期", class: "tag-long", itemClass: "memory-long" },
+      short_term: { label: "短期", class: "tag-short", itemClass: "memory-short" },
+    };
+
+    // 按层级排序：核心 > 长期 > 短期，同层内按时间倒序
+    const layerOrder = { core: 0, long_term: 1, short_term: 2 };
+    const sorted = memories.slice().sort((a, b) => {
+      const la = layerOrder[a.layer] ?? 2;
+      const lb = layerOrder[b.layer] ?? 2;
+      if (la !== lb) return la - lb;
+      return (b.create_time || "").localeCompare(a.create_time || "");
+    });
+
+    // 显示最近 15 条
+    const recent = sorted.slice(0, 15);
     let html = "";
     recent.forEach((m) => {
-      const importance = Math.round((m.importance || 0) * 100);
+      const layer = layerMap[m.layer] || layerMap.short_term;
+      const strength = Math.round((m.strength || 0) * 100);
       html +=
-        '<div class="memory-item">' +
-        '<div class="memory-content">' +
-        escapeHtml(m.content) +
-        "</div>" +
-        '<div class="memory-meta">重要度: ' +
-        importance +
-        "%</div>" +
-        "</div>";
+        '<div class="memory-item ' + layer.itemClass + '">' +
+        '<div class="memory-content">' + escapeHtml(m.content) + '</div>' +
+        '<div class="memory-meta">' +
+        '<span class="memory-layer-tag ' + layer.class + '">' + layer.label + '</span>' +
+        '<span>强度 ' + strength + '%</span>' +
+        '</div>' +
+        '</div>';
     });
     container.innerHTML = html;
   } catch (err) {
@@ -351,10 +460,8 @@ async function loadMemories() {
 // ============================================================
 document.addEventListener("keydown", (e) => {
   if (
-    e.key === "Enter" &&
-    !e.shiftKey &&
-    document.activeElement &&
-    document.activeElement.id === "chatInput"
+    e.key === "Enter" && !e.shiftKey &&
+    document.activeElement && document.activeElement.id === "chatInput"
   ) {
     e.preventDefault();
     sendMessage();
@@ -362,16 +469,15 @@ document.addEventListener("keydown", (e) => {
 });
 
 // ============================================================
-// 光球粒子效果
+// 光球粒子
 // ============================================================
 function initParticles() {
   const container = document.getElementById("orbParticles");
   if (!container) return;
-  const count = 20;
+  const count = 25;
   for (let i = 0; i < count; i++) {
     const p = document.createElement("div");
     p.className = "particle";
-    // 随机位置 & 延迟
     p.style.left = Math.random() * 100 + "%";
     p.style.top = Math.random() * 100 + "%";
     p.style.animationDelay = Math.random() * 4 + "s";
@@ -383,19 +489,13 @@ function initParticles() {
 // ============================================================
 // 工具函数
 // ============================================================
-
-/** 格式化时间 */
 function formatTime(raw) {
   try {
     const d = new Date(raw);
     if (isNaN(d.getTime())) return raw || "--";
     return d.toLocaleString("zh-CN", {
-      year: "numeric",
-      month: "2-digit",
-      day: "2-digit",
-      hour: "2-digit",
-      minute: "2-digit",
-      second: "2-digit",
+      month: "2-digit", day: "2-digit",
+      hour: "2-digit", minute: "2-digit",
       hour12: false,
     });
   } catch (_) {
@@ -403,15 +503,8 @@ function formatTime(raw) {
   }
 }
 
-/** HTML 转义，防止 XSS */
 function escapeHtml(str) {
   if (!str) return "";
-  const map = {
-    "&": "&amp;",
-    "<": "&lt;",
-    ">": "&gt;",
-    '"': "&quot;",
-    "'": "&#039;",
-  };
+  const map = { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#039;" };
   return String(str).replace(/[&<>"']/g, (c) => map[c]);
 }
