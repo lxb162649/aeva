@@ -359,6 +359,7 @@ async def chat(ws: WebSocket) -> None:
 
             # 记录用户消息到对话历史
             store.add_chat_message("user", full_text)
+            log.info("[用户] %s", full_text[:200])
 
             # 更新活跃时间
             echo["last_active"] = datetime.now().isoformat()
@@ -377,6 +378,7 @@ async def chat(ws: WebSocket) -> None:
 
             # 记录 AEVA 回复到对话历史
             store.add_chat_message("assistant", reply)
+            log.info("[AEVA] %s", reply[:200])
 
             # 重新加载最新状态（handle_user_message 可能更新了状态）
             echo = store.load_echo()
@@ -411,4 +413,4 @@ if FRONTEND_DIR.exists():
 
 # ---- 主入口 ----
 if __name__ == "__main__":
-    uvicorn.run(app, host="127.0.0.1", port=19260)
+    uvicorn.run(app, host="127.0.0.1", port=19260, access_log=False)

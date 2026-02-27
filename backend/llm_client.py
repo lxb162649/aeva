@@ -4,6 +4,7 @@
 
 import os
 import json
+import time
 import httpx
 from typing import Optional
 
@@ -158,6 +159,7 @@ class LLMClient:
         messages.append({"role": "user", "content": user_text})
 
         try:
+            t0 = time.monotonic()
             async with httpx.AsyncClient(timeout=LLM_TIMEOUT) as client:
                 response = await client.post(
                     f"{self.base_url}/chat/completions",
@@ -179,6 +181,11 @@ class LLMClient:
                 choices = data.get("choices", [])
                 if choices:
                     content = choices[0].get("message", {}).get("content", "")
+                    elapsed = time.monotonic() - t0
+                    if content:
+                        log.info(
+                            "LLM 对话调用 %.1fs, 回复 %d 字符", elapsed, len(content)
+                        )
                     return content.strip() if content else None
 
                 return None

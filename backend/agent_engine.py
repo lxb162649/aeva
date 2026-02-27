@@ -193,6 +193,16 @@ class AgentEngine:
         echo.pop("_offline_seconds", None)
         self.store.save_echo(echo)
 
+        # 记录自主行为周期摘要
+        mood = str(echo.get("mood", "calm"))
+        log.info(
+            "[自主行为] 活动=%s 心情=%s 精力=%.0f | %s",
+            activity,
+            mood,
+            float(str(echo.get("energy", 0))),
+            "; ".join(actions) if actions else "无特别动作",
+        )
+
         return actions
 
     # ============================================================
@@ -688,6 +698,7 @@ class AgentEngine:
                     memory_type="self_reflection",
                     source="self",
                 )
+                log.info("[自我审视] 模块=%s | %s", module_name, thought[:150])
                 return f"审视了自己的内在结构，{thought}"
         except Exception as e:
             log.error("自我审视失败: %s", e)
@@ -832,6 +843,7 @@ class AgentEngine:
             # 触发情感
             self.emotion.record_emotion_event(echo, "self_upgrade", description, 0.8)
 
+            log.info("[自我升级] 文件=%s | %s", target_file, description)
             return f"完成了一次自我升级：{description}"
 
         except _json.JSONDecodeError:
@@ -995,7 +1007,12 @@ class AgentEngine:
                 target_file, f"自学习: {description}"
             )
             if commit_result.get("success"):
-                log.info("自学习改进已提交: %s", commit_result.get("commit_hash", ""))
+                log.info(
+                    "[自学习] 不足=%s | 改进=%s | 文件=%s",
+                    weakness[:80],
+                    description,
+                    target_file,
+                )
 
             # 记入记忆
             self.memory.add_memory(
