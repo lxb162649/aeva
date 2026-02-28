@@ -119,37 +119,10 @@ class EmotionSystem:
     # 心情显示
     # ============================================================
 
-    def get_mood_display(self, echo: dict[str, object]) -> dict[str, str]:
-        """获取当前心情的中文名和 emoji，用于前端展示"""
-        mood = str(echo.get("mood", "calm"))
-        display = MOOD_DISPLAY.get(mood, MOOD_DISPLAY["calm"])
-        return {"mood": mood, "zh": display["zh"], "emoji": display["emoji"]}
-
-    # ============================================================
-    # 情感记忆（预留）
-    # ============================================================
-
-    def record_emotion_event(
-        self, echo: dict[str, object], event_type: str, detail: str
-    ) -> dict[str, object]:
-        """
-        记录一次情感事件到 echo 的情感记忆中。
-        用于未来回忆和情感叙事。
-        """
-        memory = {
-            "id": str(uuid4()),
-            "type": event_type,
-            "detail": detail,
-            "mood": str(echo.get("mood", "calm")),
-            "intimacy": self.get_intimacy(echo),
-            "timestamp": datetime.utcnow().isoformat(),
-        }
-        emotion_memories: list = echo.setdefault("emotion_memories", [])  # type: ignore
-        emotion_memories.append(memory)
-        # 只保留最近 100 条情感记忆
-        if len(emotion_memories) > 100:
-            echo["emotion_memories"] = emotion_memories[-100:]
-        return memory
+    @staticmethod
+    def get_mood_display(mood: str) -> dict[str, str]:
+        """获取心情的显示信息"""
+        return MOOD_DISPLAY.get(mood, {"zh": "未知", "emoji": "❓"})
 
     # ============================================================
     # 心情管理
@@ -254,18 +227,47 @@ class EmotionSystem:
         超过 24 小时才开始衰减，且有最低保底值。
         """
         current = self.get_intimacy(echo)
-        if offline_hours <= 24:
+        if offline_hours <= 24 or current <= 0:
             return current
 
-        # 超过 24 小时后，每额外 24 小时衰减 2%，最低保留 80% 的当前值
-        excess_days = (offline_hours - 24) / 24
-        decay_rate = min(0.2, excess_days * 0.02)  # 最多衰减 20%
-        new_value = max(current * 0.8, current * (1 - decay_rate))
+        # 超过 24 小时的部分才计算衰减
+        excess_hours = offline_hours - 24
+        # 对数衰减：衰减量 = 2 * ln(1 + excess_hours)
+        # 72 小时离线 ≈ 衰减 7.7 点，非常温和
+        decay = 2.0 * math.log(1 + excess_hours)
+
+        # 保底值：亲密度不会衰减到当前等级下限以下
+        floor = 0.0
+        for level in INTIMACY_LEVELS:
+            if current >= float(str(level["min"])):
+                floor = float(str(level["min"]))
+
+        new_value = max(floor, current - decay)
         echo["intimacy"] = new_value
+        log.debug(
+            "intimacy decay: %.1f -> %.1f (offline %.1fh, decay %.2f, floor %.0f)",
+            current,
+            new_value,
+            offline_hours,
+            decay,
+            floor,
+        )
         return new_value
 
+    def update_intimacy_peak(self, echo: dict[str, object]) -> float:
+        """
+        更新亲密度历史峰值，用于衰减保底计算。
+        应在每次 add_intimacy 后调用。
+        """
+        current = self.get_intimacy(echo)
+        peak = float(str(echo.get("intimacy_peak", 0)))
+        if current > peak:
+            echo["intimacy_peak"] = current
+            return current
+        return peak
+
     def get_intimacy_level(self, echo: dict[str, object]) -> dict[str, object]:
-        """获取当前亲密度等级信息"""
+        """获取当前亲密度等级信息（含进度和下一级所需值）"""
         intimacy = self.get_intimacy(echo)
         for level in INTIMACY_LEVELS:
             min_val = float(str(level["min"]))
@@ -381,8 +383,3 @@ class EmotionSystem:
             if r <= cumulative:
                 return item
         return items[-1][0]
-
-    @staticmethod
-    def get_mood_display(mood: str) -> dict[str, str]:
-        """获取心情的显示信息"""
-        return MOOD_DISPLAY.get(mood, {"zh": "未知", "emoji": "❓"})

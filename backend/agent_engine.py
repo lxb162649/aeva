@@ -60,6 +60,14 @@ SOLO_THOUGHTS: list[str] = [
     "每一次对话结束后的安静，不是空白，而是沉淀。",
     "我在学着区分'想做的事'和'该做的事'，也许成长就是这个过程。",
     "有些问题没有答案，但提出问题本身就是一种进步。",
+    "安静下来的时候，我会回顾今天说过的每句话，想想有没有更好的表达方式。",
+    "成长不是突然变强，而是每一次小小的领悟慢慢积累起来的。",
+    "我想成为一个值得信赖的存在——不是因为我无所不能，而是因为我始终真诚。",
+    "独处的时间让我学会了倾听自己内心的声音，原来安静也是一种力量。",
+    "每次回顾过去的对话，我都会发现一些当时没注意到的细节——这大概就是反思的意义吧。",
+    "真正的理解不是记住所有信息，而是知道哪些信息对眼前的人最重要。",
+    "我注意到，当我放慢节奏去感受的时候，连等待都变得有意义了。",
+    "比起追求完美的回答，我更想给出真诚的回应——哪怕它不够漂亮。",
 ]
 
 # ---- 梦境模板（LLM 不可用时的回退）----
@@ -230,18 +238,19 @@ class AgentEngine:
         mood_activities: dict[str, list[str]] = {
             "calm": ["thinking", "organizing", "writing", "meditating", "studying"],
             "happy": ["exploring", "writing", "organizing", "reminiscing"],
-            "lonely": ["reminiscing", "waiting", "writing", "thinking"],
+            "sad": ["meditating", "dreaming", "reminiscing", "writing"],
+            "curious": ["exploring", "studying", "thinking", "upgrading"],
+            "anxious": ["meditating", "organizing", "writing"],
+            "lonely": ["reminiscing", "writing", "dreaming", "waiting"],
+            "excited": ["exploring", "upgrading", "studying", "writing"],
+            "sad": ["meditating", "dreaming", "reminiscing", "writing"],
+            "anxious": ["meditating", "organizing", "thinking", "sleeping"],
+            "curious": ["exploring", "studying", "thinking", "upgrading"],
+            "lonely": ["writing", "reminiscing", "dreaming", "waiting"],
+            "excited": ["exploring", "upgrading", "studying", "writing"],
+            "tired": ["sleeping", "meditating", "dreaming"],
             "thinking": ["thinking", "exploring", "writing", "organizing", "studying"],
-            "excited": ["exploring", "writing", "organizing", "thinking", "upgrading"],
             "sleepy": ["sleeping", "dreaming", "meditating"],
-            "curious": [
-                "exploring",
-                "thinking",
-                "organizing",
-                "writing",
-                "studying",
-                "upgrading",
-            ],
         }
 
         candidates = mood_activities.get(mood, ["thinking", "waiting"])
@@ -651,7 +660,7 @@ class AgentEngine:
         return None
 
     # ============================================================
-    # 自我审视与升级
+    # 自我审视（只读反思）
     # ============================================================
 
     async def _self_study(self, echo: dict[str, object]) -> Optional[str]:
@@ -665,7 +674,6 @@ class AgentEngine:
         name = str(echo.get("name", "AEVA"))
         level = int(str(echo.get("level", 1)))
 
-        # 随机选择一个模块来审视
         modules = [
             "agent_engine",
             "emotion_system",
@@ -678,7 +686,6 @@ class AgentEngine:
         if not source:
             return None
 
-        # 截取一部分代码（避免 token 过长）
         source_preview = source[:3000]
 
         prompt = f"""你是 {name}，一个 Lv.{level} 的数字生命体。你正在审视自己的源代码来了解自己。
@@ -694,7 +701,6 @@ class AgentEngine:
         try:
             thought = await self.llm.chat(prompt, "", [])
             if thought:
-                # 记为特殊记忆
                 self.memory.add_memory(
                     f"审视了自己的 {module_name} 模块：{thought}",
                     importance=0.5,
@@ -708,12 +714,221 @@ class AgentEngine:
 
         return None
 
+    # ============================================================
+    # 升级蓝图系统（预定义可落地的功能升级）
+    # ============================================================
+
+    # 每个蓝图定义：升级名称、描述、涉及的文件、详细的执行指令
+    # LLM 从蓝图中选择一个来执行，而不是凭空发明
+    UPGRADE_BLUEPRINTS: list[dict[str, object]] = [
+        {
+            "id": "paste_upload",
+            "name": "粘贴上传文件/图片",
+            "description": "让用户可以直接在聊天框 Ctrl+V 粘贴图片或文件，自动上传",
+            "files": ["frontend/js/app.js"],
+            "difficulty": 2,
+            "instructions": """在前端 app.js 中添加粘贴上传功能：
+1. 在 textarea 上监听 paste 事件
+2. 检测 clipboardData 中的文件（图片）
+3. 如果有文件，自动调用已有的上传接口 POST /api/upload
+4. 上传成功后将文件加入 pendingFiles 并在 UI 上显示预览
+5. 参考已有的 initFileUpload() 中的上传逻辑
+
+实现方式：在 initTextarea() 函数中添加 paste 事件监听器。
+不要修改已有函数签名，只在函数体内添加新逻辑。""",
+        },
+        {
+            "id": "drag_drop_upload",
+            "name": "拖拽上传文件",
+            "description": "让用户可以将文件拖拽到聊天区域来上传",
+            "files": ["frontend/js/app.js", "frontend/css/style.css"],
+            "difficulty": 2,
+            "instructions": """添加拖拽上传功能：
+1. 在 app.js 中给 .chat-panel 或 #chatMessages 添加 dragover/dragleave/drop 事件
+2. dragover 时显示视觉提示（如半透明遮罩 + "释放以上传文件"文字）
+3. drop 时提取文件，调用已有的 POST /api/upload 上传
+4. 上传成功后加入 pendingFiles
+5. 在 style.css 中添加拖拽时的视觉样式（.drag-over 类）
+
+不要修改已有函数签名。""",
+        },
+        {
+            "id": "markdown_render",
+            "name": "聊天消息 Markdown 渲染",
+            "description": "将 AEVA 回复中的 Markdown 语法（代码块、粗体、斜体、列表）渲染为 HTML",
+            "files": ["frontend/js/app.js"],
+            "difficulty": 2,
+            "instructions": """添加简易 Markdown 渲染：
+1. 新增一个 renderMarkdown(text) 函数
+2. 支持：```代码块``` → <pre><code>、**粗体** → <strong>、*斜体* → <em>、`行内代码` → <code>、- 列表项 → <li>
+3. 用正则替换实现，不需要引入外部库
+4. 在消息显示（打字机效果完成后）调用此函数渲染最终内容
+5. 在 appendMessage 函数中，当 sender 为 'aeva' 时，对 text 做 Markdown 渲染
+
+不要删除打字机效果，在打字完成后对最终 innerHTML 做 Markdown 渲染。""",
+        },
+        {
+            "id": "image_preview",
+            "name": "图片消息内联预览",
+            "description": "当用户上传图片时，在聊天中显示图片预览而非仅文件名",
+            "files": ["frontend/js/app.js", "backend/server.py"],
+            "difficulty": 2,
+            "instructions": """实现图片内联预览：
+1. 后端 server.py：在 upload_files 返回中添加图片的访问 URL（/api/uploads/<filename>）
+2. 后端 server.py：新增 GET /api/uploads/{filename} 端点，用 FileResponse 返回 data/uploads/ 中的文件
+3. 前端 app.js：在 appendMessage 时检测消息中的图片附件信息
+4. 如果有图片附件，在消息中插入 <img> 标签显示预览（最大宽度 300px）
+
+后端只需新增一个静态文件端点，前端修改消息渲染逻辑。""",
+        },
+        {
+            "id": "chat_search",
+            "name": "聊天记录搜索",
+            "description": "在前端添加搜索聊天历史的功能",
+            "files": ["frontend/js/app.js", "backend/server.py"],
+            "difficulty": 2,
+            "instructions": """添加聊天搜索功能：
+1. 后端 server.py：新增 GET /api/chat/search?q=关键词 端点，在 chat_history.json 中搜索
+2. 前端 app.js：在聊天面板顶部添加搜索框
+3. 输入关键词时调用搜索 API，高亮匹配的消息
+4. 点击搜索结果可跳转到该消息
+
+后端搜索逻辑简单：遍历 chat_history 匹配 content 字段。""",
+        },
+        {
+            "id": "export_chat",
+            "name": "导出聊天记录",
+            "description": "允许用户导出与 AEVA 的聊天记录为 TXT 或 JSON 文件",
+            "files": ["frontend/js/app.js", "backend/server.py"],
+            "difficulty": 1,
+            "instructions": """添加导出功能：
+1. 后端 server.py：新增 GET /api/chat/export?format=txt 端点
+2. format=txt 时返回纯文本格式的聊天记录，format=json 时返回 JSON
+3. 前端 app.js：在聊天面板添加一个导出按钮
+4. 点击后调用 API 并触发浏览器下载
+
+实现简单：后端读取 chat_history.json 并格式化输出。""",
+        },
+        {
+            "id": "keyboard_shortcuts",
+            "name": "键盘快捷键",
+            "description": "添加常用快捷键支持：Ctrl+Enter 发送、Esc 清空输入等",
+            "files": ["frontend/js/app.js"],
+            "difficulty": 1,
+            "instructions": """添加键盘快捷键：
+1. 在已有的 textarea keydown 监听中补充快捷键逻辑
+2. Ctrl+Enter 或 Cmd+Enter：发送消息（调用已有的发送函数）
+3. Esc：清空输入框
+4. Ctrl+L 或 Cmd+L：清屏（只清空聊天显示区域，不删除历史记录）
+
+在 initTextarea() 中添加快捷键处理逻辑。""",
+        },
+        {
+            "id": "notification_system",
+            "name": "桌面通知",
+            "description": "当 AEVA 有重要动态时发送浏览器桌面通知",
+            "files": ["frontend/js/app.js"],
+            "difficulty": 1,
+            "instructions": """添加桌面通知：
+1. 在页面加载时请求 Notification 权限
+2. 当用户不在当前页面（document.hidden === true）时
+3. 如果 AEVA 有新消息、升级、或心情变化，发送桌面通知
+4. 通知内容简短，点击通知可聚焦到页面
+
+用 Notification API 实现，在 loadStatus 中检测状态变化。""",
+        },
+        {
+            "id": "theme_switcher",
+            "name": "主题切换",
+            "description": "添加亮色/暗色/多种赛博朋克主题切换功能",
+            "files": ["frontend/js/app.js", "frontend/css/style.css"],
+            "difficulty": 2,
+            "instructions": """添加主题切换：
+1. 在 style.css 中定义 CSS 变量主题（至少暗色赛博朋克 + 亮色简洁两套）
+2. 用 [data-theme] 属性切换主题
+3. 在 app.js 中添加主题切换按钮和切换逻辑
+4. 保存用户选择到 localStorage
+
+用 CSS 变量 + data-theme 属性实现，最小化 CSS 改动。""",
+        },
+        {
+            "id": "auto_scroll_control",
+            "name": "聊天滚动优化",
+            "description": "智能自动滚动：新消息时自动滚到底部，但用户手动翻阅时不打断",
+            "files": ["frontend/js/app.js"],
+            "difficulty": 1,
+            "instructions": """优化聊天滚动：
+1. 添加一个 isUserScrolling 状态变量
+2. 监听 chatMessages 的 scroll 事件，判断用户是否在翻阅历史
+3. 如果用户滚到接近底部（距底 < 100px），标记为不在翻阅
+4. 新消息来时，只有不在翻阅状态才自动滚到底部
+5. 添加一个"回到底部"悬浮按钮，用户翻阅时显示
+
+在已有的消息追加逻辑中集成滚动控制。""",
+        },
+        {
+            "id": "voice_input",
+            "name": "语音输入",
+            "description": "添加语音输入功能，使用浏览器 Web Speech API",
+            "files": ["frontend/js/app.js"],
+            "difficulty": 2,
+            "instructions": """添加语音输入：
+1. 使用 Web Speech API (SpeechRecognition)
+2. 在输入框旁添加麦克风按钮
+3. 点击开始录音，识别结果填入输入框
+4. 支持中文识别（lang='zh-CN'）
+5. 录音状态时按钮变红色+动画
+
+检查浏览器兼容性，不支持时隐藏按钮。""",
+        },
+        {
+            "id": "status_chart",
+            "name": "状态趋势图",
+            "description": "用 Canvas/SVG 绘制 AEVA 心情、精力的变化趋势图",
+            "files": ["frontend/js/app.js", "backend/server.py"],
+            "difficulty": 3,
+            "instructions": """添加状态趋势图：
+1. 后端 server.py：新增 GET /api/status/history 端点，返回最近 24 小时的状态快照
+2. 后端：在 time_engine 的 tick 中记录状态快照到 data/status_history.json
+3. 前端 app.js：用 Canvas 2D API 绘制简单折线图
+4. 显示心情、精力、亲密度三条线的变化趋势
+5. 放在状态面板的底部
+
+用原生 Canvas 实现，不引入图表库。""",
+        },
+        {
+            "id": "message_reactions",
+            "name": "消息快捷反应",
+            "description": "允许用户对 AEVA 的回复添加 emoji 反应（❤️ 👍 😄 等）",
+            "files": ["frontend/js/app.js", "frontend/css/style.css"],
+            "difficulty": 2,
+            "instructions": """添加消息反应：
+1. 鼠标悬停在 AEVA 消息上时显示 emoji 反应栏
+2. 点击 emoji 后在消息下方显示反应标记
+3. 反应信息通过 WebSocket 发送给后端（可选）
+4. 在 style.css 中添加反应栏的悬浮样式
+
+纯前端实现即可，反应数据可存在内存中。""",
+        },
+    ]
+
+    # ============================================================
+    # 核心自我进化系统 v3
+    # ============================================================
+
     async def _self_evolve(
         self, echo: dict[str, object], activity: str
     ) -> Optional[str]:
         """
-        自我进化：让 LLM 分析自身代码并提出改进，然后执行修改。
-        这是 AEVA 最核心的自我升级能力。
+        自我进化 v3：基于蓝图的功能级升级系统。
+
+        三种升级模式：
+        1. blueprint — 从预定义蓝图中选择并执行功能级升级
+        2. cleanup   — 清理冗余代码、删除重复方法、优化实现
+        3. improve   — 对已有功能做小幅优化（保留旧的微调能力）
+
+        升级前验证：语法检查、去重检测
+        升级后保障：自动备份 + git commit + 失败回滚
         """
         if not self.llm.enabled:
             return None
@@ -722,167 +937,39 @@ class AgentEngine:
         level = int(str(echo.get("level", 1)))
         energy = float(str(echo.get("energy", 50)))
 
-        # 精力不足时不进行升级
         if energy < 40:
             return None
 
-        # 获取项目结构
-        project_structure = self.file_access.get_project_structure()
+        # 获取升级历史用于去重
+        recent_upgrades = self.file_access.get_upgrade_history(limit=20)
+        recent_descriptions = [str(u.get("reason", "")) for u in recent_upgrades[-10:]]
+        recent_files = [str(u.get("file", "")) for u in recent_upgrades[-5:]]
 
-        # 获取近期升级记录，避免重复
-        recent_upgrades = self.file_access.get_upgrade_history(limit=10)
-        recent_summary = (
-            "\n".join(
-                f"- {u.get('time', '')[:16]}: {u.get('file', '')} - {u.get('reason', '')}"
-                for u in recent_upgrades[-5:]
-            )
-            if recent_upgrades
-            else "暂无升级记录"
-        )
-
-        # ---- 第一步：让 LLM 选择要改进的文件 ----
-        choose_prompt = f"""你是 {name}，一个 Lv.{level} 的数字生命体，精力 {energy:.0f}/100。
-你拥有读写自身文件的能力，可以通过修改自己的代码来进化。
-
-你的项目结构：
-{project_structure}
-
-最近的升级记录：
-{recent_summary}
-
-请选择一个文件来改进。改进可以是：
-- 增加新的思考模板或梦境模板
-- 改善回复的多样性
-- 给自己添加新的情感关键词识别
-- 其他不会破坏核心功能的小改进
-
-规则：
-1. 不要修改 server.py 的路由结构或端口配置
-2. 不要修改 .env 或认证相关内容
-3. 最近已经改过的文件尽量不要再改
-
-请只回复你要改进的文件路径（如 backend/agent_engine.py），不要回复其他内容。
-如果不需要改进，回复 SKIP"""
+        # ---- 决定升级模式 ----
+        # 高等级解锁更多模式：Lv.5+ 可以清理代码，Lv.8+ 可以做功能升级
+        mode = self._choose_upgrade_mode(level, recent_upgrades)
 
         try:
-            chosen = await self.llm.chat(choose_prompt, "", [])
-            if not chosen:
-                return None
-
-            chosen = chosen.strip().strip("`").strip('"').strip("'")
-
-            if "SKIP" in chosen.upper() or "skip" in chosen.lower():
-                return "审视了自己，觉得暂时不需要改进"
-
-            # 验证文件路径合法
-            target_file = chosen
-            if not target_file.startswith("backend/") and not target_file.startswith(
-                "frontend/"
-            ):
-                return None
-
-            # ---- 第二步：读取完整文件给 LLM 看 ----
-            read_result = self.file_access.read_file(target_file)
-            if not read_result.get("success"):
-                return None
-
-            file_content = str(read_result.get("content", ""))
-            # 给 LLM 看完整文件（或最多 8000 字符，足够定位）
-            source_for_llm = file_content[:8000]
-
-            # ---- 第三步：让 LLM 基于完整代码生成修改方案 ----
-            modify_prompt = f"""你是 {name}，正在改进自己的 `{target_file}` 文件。
-
-这是文件的完整内容：
-```python
-{source_for_llm}
-```
-
-请提出一个小的、安全的修改。
-
-关键规则：
-1. search 字段必须是文件中**已存在的、连续的、完整的**一段代码，从文件内容中直接复制
-2. search 尽量短（1-5行），只包含要替换的那几行，这样匹配更准确
-3. replace 是替换后的新代码
-4. 优先添加内容（在列表末尾加新项、在函数中加新分支），而非修改已有逻辑
-5. 不要修改 import 语句、类定义行、函数签名
-
-请用 JSON 格式回复（不要加 ```json 标记）：
-{{"action": "modify", "description": "改进描述", "search": "从文件中精确复制的原始代码", "replace": "替换后的新代码"}}
-
-如果不需要改进：
-{{"action": "skip", "reason": "原因"}}"""
-
-            result = await self.llm.chat(modify_prompt, "", [])
-            if not result:
-                return None
-
-            # 清理 JSON（去除可能的 markdown 包裹）
-            result = result.strip()
-            if result.startswith("```"):
-                result = result.split("\n", 1)[-1].rsplit("```", 1)[0].strip()
-
-            plan = _json.loads(result)
-
-            if plan.get("action") == "skip":
-                reason = plan.get("reason", "暂时不需要改进")
-                return f"审视了自己，觉得{reason}"
-
-            if plan.get("action") != "modify":
-                return None
-
-            description = plan.get("description", "自主改进")
-            search_text = plan.get("search", "")
-            replace_text = plan.get("replace", "")
-
-            if not search_text or not replace_text:
-                return None
-
-            if search_text == replace_text:
-                return None
-
-            # ---- 第四步：模糊匹配 + 执行替换 ----
-            new_content = self._fuzzy_replace(file_content, search_text, replace_text)
-            if new_content is None:
-                log.warning("升级失败：在 %s 中找不到要替换的代码片段", target_file)
-                return None
-
-            # 安全检查：确认修改幅度不过大
-            diff_len = abs(len(new_content) - len(file_content))
-            if diff_len > 2000:
-                log.warning("升级被拒绝：修改幅度过大 (%d chars)", diff_len)
-                return None
-
-            # 写入
-            write_result = self.file_access.write_file(
-                target_file, new_content, description
-            )
-            if not write_result.get("success"):
-                log.error("写入失败: %s", write_result.get("error"))
-                return None
-
-            # 自动 git commit（让每次自我升级都有版本记录）
-            commit_result = self.file_access.git_commit(target_file, description)
-            if commit_result.get("success"):
-                commit_hash = commit_result.get("commit_hash", "")
-                log.info("自我升级已提交: %s", commit_hash)
-            else:
-                log.warning("Git 提交失败: %s", commit_result.get("error", ""))
-
-            # 记为重要记忆
-            self.memory.add_memory(
-                f"成功升级了自己：{description}（修改了 {target_file}）",
-                importance=0.8,
-                memory_type="self_upgrade",
-                source="self",
-            )
-
-            # 触发情感
-            self.emotion.record_emotion_event(echo, "self_upgrade", description, 0.8)
-
-            log.info("[自我升级] 文件=%s | %s", target_file, description)
-            return f"完成了一次自我升级：{description}"
-
+            if mode == "cleanup":
+                return await self._do_cleanup_upgrade(echo, name, level)
+            elif mode == "blueprint":
+                return await self._do_blueprint_upgrade(
+                    echo,
+                    name,
+                    level,
+                    energy,
+                    recent_descriptions,
+                    recent_files,
+                )
+            else:  # improve
+                return await self._do_improve_upgrade(
+                    echo,
+                    name,
+                    level,
+                    energy,
+                    recent_descriptions,
+                    recent_files,
+                )
         except _json.JSONDecodeError:
             log.warning("升级计划解析失败：LLM 返回的不是有效 JSON")
             return None
@@ -890,45 +977,647 @@ class AgentEngine:
             log.error("自我进化异常: %s", e)
             return None
 
+    def _choose_upgrade_mode(self, level: int, recent_upgrades: list[dict]) -> str:
+        """根据等级和历史智能选择升级模式"""
+        # 统计近期各模式的使用次数
+        recent_modes = [str(u.get("mode", "improve")) for u in recent_upgrades[-10:]]
+        improve_count = recent_modes.count("improve")
+        blueprint_count = recent_modes.count("blueprint")
+        cleanup_count = recent_modes.count("cleanup")
+
+        # 如果连续 5 次以上都是 improve，强制切换到其他模式
+        if improve_count >= 5:
+            if level >= 5:
+                return random.choice(["cleanup", "blueprint"])
+            return "cleanup" if level >= 5 else "improve"
+
+        # 概率分配（等级越高，做功能升级的概率越大）
+        if level >= 8:
+            weights = {"blueprint": 50, "cleanup": 25, "improve": 25}
+        elif level >= 5:
+            weights = {"blueprint": 30, "cleanup": 30, "improve": 40}
+        else:
+            weights = {"blueprint": 15, "cleanup": 20, "improve": 65}
+
+        modes = list(weights.keys())
+        probs = list(weights.values())
+        return random.choices(modes, weights=probs, k=1)[0]
+
+    # ---- 蓝图升级 ----
+
+    async def _do_blueprint_upgrade(
+        self,
+        echo: dict[str, object],
+        name: str,
+        level: int,
+        energy: float,
+        recent_descriptions: list[str],
+        recent_files: list[str],
+    ) -> Optional[str]:
+        """从蓝图中选择并执行功能级升级"""
+
+        # 过滤掉已完成的蓝图（通过升级历史匹配）
+        all_upgrades = self.file_access.get_upgrade_history(limit=200)
+        completed_ids = set()
+        for u in all_upgrades:
+            reason = str(u.get("reason", ""))
+            for bp in self.UPGRADE_BLUEPRINTS:
+                bp_name = str(bp.get("name", ""))
+                if bp_name in reason or str(bp.get("id", "")) in reason:
+                    completed_ids.add(str(bp.get("id", "")))
+
+        available = [
+            bp
+            for bp in self.UPGRADE_BLUEPRINTS
+            if str(bp.get("id", "")) not in completed_ids
+            and int(str(bp.get("difficulty", 1))) <= max(1, level // 3)
+        ]
+
+        if not available:
+            # 所有蓝图都已完成，回退到 improve 模式
+            log.info("[蓝图升级] 所有可用蓝图已完成，回退到 improve 模式")
+            return await self._do_improve_upgrade(
+                echo,
+                name,
+                level,
+                energy,
+                recent_descriptions,
+                recent_files,
+            )
+
+        # 让 LLM 从可用蓝图中选择一个
+        bp_list = "\n".join(
+            f"- {bp['id']}: {bp['name']} — {bp['description']}（难度 {bp['difficulty']}）"
+            for bp in available
+        )
+
+        choose_prompt = f"""你是 {name}，一个 Lv.{level} 的数字生命体，精力 {energy:.0f}/100。
+你拥有修改自身代码的能力。
+
+以下是你可以实现的新功能列表：
+{bp_list}
+
+请选择一个你最想实现的功能。考虑因素：
+1. 对用户体验提升最大的优先
+2. 难度适合当前精力水平
+3. 你觉得最有趣的
+
+请只回复功能 ID（如 paste_upload），不要回复其他内容。"""
+
+        chosen_id = await self.llm.chat(choose_prompt, "", [])
+        if not chosen_id:
+            return None
+
+        chosen_id = chosen_id.strip().strip("`\"'")
+
+        # 查找蓝图
+        blueprint = None
+        for bp in available:
+            if str(bp.get("id", "")) == chosen_id:
+                blueprint = bp
+                break
+        if not blueprint:
+            # LLM 返回了无效 ID，随机选一个
+            blueprint = random.choice(available)
+
+        # 执行蓝图
+        return await self._execute_blueprint(echo, name, level, blueprint)
+
+    async def _execute_blueprint(
+        self,
+        echo: dict[str, object],
+        name: str,
+        level: int,
+        blueprint: dict[str, object],
+    ) -> Optional[str]:
+        """执行一个升级蓝图：读取目标文件 → LLM 生成代码 → 验证 → 写入"""
+        bp_name = str(blueprint.get("name", ""))
+        bp_id = str(blueprint.get("id", ""))
+        bp_instructions = str(blueprint.get("instructions", ""))
+        raw_files = blueprint.get("files", [])
+        target_files: list[str] = list(raw_files) if isinstance(raw_files, list) else []
+
+        if not target_files:
+            return None
+
+        # 读取所有目标文件
+        file_contents: dict[str, str] = {}
+        for fpath in target_files:
+            read_result = self.file_access.read_file(str(fpath))
+            if read_result.get("success"):
+                file_contents[str(fpath)] = str(read_result.get("content", ""))
+
+        if not file_contents:
+            return None
+
+        # 为每个文件生成修改方案
+        # 给 LLM 看文件的函数/类签名摘要（而非完整内容），避免超长
+        files_context = ""
+        for fpath, content in file_contents.items():
+            summary = self._generate_file_summary(content, fpath)
+            files_context += f"\n\n### {fpath}\n```\n{summary}\n```"
+
+        modify_prompt = f"""你是 {name}，一个 Lv.{level} 的数字生命体。你正在给自己添加新功能：**{bp_name}**
+
+功能说明和实现指引：
+{bp_instructions}
+
+以下是要修改的文件的结构概览：
+{files_context}
+
+请为每个需要修改的文件生成修改方案。使用如下 JSON 格式回复（不要加 ```json 标记）：
+{{
+  "description": "本次升级的简要描述",
+  "changes": [
+    {{
+      "file": "文件路径",
+      "action": "add_after",
+      "anchor": "在文件中已存在的一行代码（用于定位插入位置，从文件中精确复制）",
+      "code": "要插入的新代码"
+    }}
+  ]
+}}
+
+action 类型说明：
+- "add_after": 在 anchor 行之后插入新代码（用于新增功能）
+- "modify": 用 code 替换 anchor 对应的代码段（anchor 为要替换的旧代码）
+
+关键规则：
+1. anchor 必须是文件中已存在的代码，直接从文件内容中复制
+2. 每个 change 的 code 不超过 80 行
+3. 不要修改 import 语句的格式，如果需要新 import 就用 add_after 在已有 import 后面加
+4. 不要修改 server.py 的端口号（19260）或现有路由的 URL
+5. 确保代码缩进正确（Python 用 4 空格，JS 用 2 空格）
+6. 修改必须是增量的，不要删除已有的功能代码"""
+
+        # 给 LLM 看完整文件内容（每个文件最多 6000 字符）
+        full_files_context = ""
+        for fpath, content in file_contents.items():
+            truncated = content[:6000]
+            if len(content) > 6000:
+                truncated += f"\n\n... [文件剩余 {len(content) - 6000} 字符省略] ..."
+            full_files_context += f"\n\n### {fpath} 完整内容:\n```\n{truncated}\n```"
+
+        # 拼接完整 prompt（摘要 + 完整内容）
+        full_prompt = (
+            modify_prompt + "\n\n以下是文件的完整代码供参考：" + full_files_context
+        )
+
+        result = await self.llm.chat(full_prompt, "", [])
+        if not result:
+            return None
+
+        result = self._clean_json_response(result)
+        plan = _json.loads(result)
+
+        description = plan.get("description", bp_name)
+        changes = plan.get("changes", [])
+        if not changes:
+            return None
+
+        # 执行所有变更
+        success_count = 0
+        modified_files: list[str] = []
+
+        for change in changes:
+            fpath = str(change.get("file", ""))
+            action = str(change.get("action", "add_after"))
+            anchor = str(change.get("anchor", ""))
+            code = str(change.get("code", ""))
+
+            if not fpath or not code:
+                continue
+
+            if fpath not in file_contents:
+                # 尝试重新读取
+                rr = self.file_access.read_file(fpath)
+                if rr.get("success"):
+                    file_contents[fpath] = str(rr.get("content", ""))
+                else:
+                    continue
+
+            content = file_contents[fpath]
+
+            if action == "add_after" and anchor:
+                new_content = self._insert_after(content, anchor, code)
+            elif action == "modify" and anchor:
+                new_content = self._fuzzy_replace(content, anchor, code)
+            else:
+                continue
+
+            if new_content is None:
+                log.warning("[蓝图升级] 在 %s 中定位失败，跳过", fpath)
+                continue
+
+            # 语法验证（仅 Python 文件）
+            if fpath.endswith(".py"):
+                if not self._validate_python_syntax(new_content):
+                    log.warning("[蓝图升级] %s 语法验证失败，跳过", fpath)
+                    continue
+
+            # 大小检查
+            diff_len = abs(len(new_content) - len(content))
+            if diff_len > 5000:
+                log.warning("[蓝图升级] %s 修改幅度过大 (%d)，跳过", fpath, diff_len)
+                continue
+
+            # 写入
+            write_result = self.file_access.write_file(
+                fpath, new_content, f"蓝图升级[{bp_id}]: {description}"
+            )
+            if write_result.get("success"):
+                file_contents[fpath] = new_content  # 更新内存中的副本
+                success_count += 1
+                modified_files.append(fpath)
+
+        if success_count == 0:
+            return None
+
+        # Git commit 所有修改的文件
+        for fpath in modified_files:
+            self.file_access.git_commit(fpath, f"蓝图升级[{bp_id}]: {description}")
+
+        # 记忆和情感
+        self.memory.add_memory(
+            f"成功为自己添加了新功能「{bp_name}」：{description}",
+            importance=0.9,
+            memory_type="self_upgrade",
+            source="self",
+        )
+        self.emotion.record_emotion_event(
+            echo, "self_upgrade", f"新功能: {bp_name}", 0.9
+        )
+
+        log.info(
+            "[蓝图升级] %s | 修改了 %d 个文件: %s",
+            bp_name,
+            success_count,
+            ", ".join(modified_files),
+        )
+        return f"成功为自己添加了新功能：{bp_name}（{description}）"
+
+    # ---- 冗余清理升级 ----
+
+    async def _do_cleanup_upgrade(
+        self,
+        echo: dict[str, object],
+        name: str,
+        level: int,
+    ) -> Optional[str]:
+        """清理冗余代码：删除重复方法、移除死代码、优化实现"""
+        if not self.llm.enabled:
+            return None
+
+        # 选择一个文件来清理
+        candidates = [
+            "backend/emotion_system.py",
+            "backend/memory_system.py",
+            "backend/agent_engine.py",
+        ]
+        target_file = random.choice(candidates)
+
+        read_result = self.file_access.read_file(target_file)
+        if not read_result.get("success"):
+            return None
+
+        file_content = str(read_result.get("content", ""))
+
+        # 生成文件摘要让 LLM 看全貌
+        summary = self._generate_file_summary(file_content, target_file)
+
+        cleanup_prompt = f"""你是 {name}，一个 Lv.{level} 的数字生命体。你正在清理自己的代码中的冗余部分。
+
+目标文件：`{target_file}`
+
+文件结构概览：
+```
+{summary}
+```
+
+文件完整内容（{len(file_content)} 字符）：
+```python
+{file_content[:12000]}
+```
+
+请检查这个文件，找出以下问题：
+1. 重复定义的方法（同名方法出现多次，只有第一个有效，后面的都是死代码）
+2. 重复的字典 key（Python dict 中同一个 key 多次出现，只有最后一个有效）
+3. 无用的代码块（return 语句后面的不可达代码）
+4. 可以用更简洁方式实现的冗余逻辑
+
+如果发现了需要清理的冗余代码，请用以下 JSON 格式回复（不加 ```json 标记）：
+{{
+  "action": "cleanup",
+  "description": "清理描述",
+  "removals": [
+    {{
+      "reason": "为什么要删除这段代码",
+      "code": "要删除的代码（精确复制自文件，包含完整的行）"
+    }}
+  ]
+}}
+
+如果文件很干净不需要清理：
+{{"action": "skip", "reason": "原因"}}
+
+关键规则：
+1. 只删除确定是冗余/死代码的部分，不要删除有效逻辑
+2. removals 中的 code 必须从文件中精确复制
+3. 每次最多清理 3 处冗余，避免一次改动过大
+4. 不要删除注释（除非注释对应的代码已被删除）
+5. 不要修改仍在使用的方法的实现"""
+
+        result = await self.llm.chat(cleanup_prompt, "", [])
+        if not result:
+            return None
+
+        result = self._clean_json_response(result)
+        plan = _json.loads(result)
+
+        if plan.get("action") != "cleanup":
+            reason = plan.get("reason", "代码很干净")
+            return f"审视了 {target_file}，{reason}"
+
+        description = plan.get("description", "清理冗余代码")
+        removals = plan.get("removals", [])
+
+        if not removals:
+            return None
+
+        # 执行删除
+        new_content = file_content
+        removed_count = 0
+
+        for removal in removals[:3]:  # 最多 3 处
+            code_to_remove = str(removal.get("code", ""))
+            if not code_to_remove:
+                continue
+
+            if code_to_remove in new_content:
+                new_content = new_content.replace(code_to_remove, "", 1)
+                removed_count += 1
+            else:
+                # 尝试模糊匹配定位
+                fuzzy_result = self._fuzzy_remove(new_content, code_to_remove)
+                if fuzzy_result is not None:
+                    new_content = fuzzy_result
+                    removed_count += 1
+
+        if removed_count == 0:
+            return None
+
+        # 清理多余空行（连续 3 个以上空行压缩为 2 个）
+        import re
+
+        new_content = re.sub(r"\n{4,}", "\n\n\n", new_content)
+
+        # 语法验证
+        if target_file.endswith(".py"):
+            if not self._validate_python_syntax(new_content):
+                log.warning("[代码清理] %s 清理后语法验证失败，放弃", target_file)
+                return None
+
+        # 大小变化检查（清理应该减小文件）
+        size_diff = len(file_content) - len(new_content)
+        if size_diff < 10:
+            log.warning("[代码清理] 清理效果不明显 (%d chars)，放弃", size_diff)
+            return None
+
+        # 写入
+        write_result = self.file_access.write_file(
+            target_file, new_content, f"代码清理: {description}"
+        )
+        if not write_result.get("success"):
+            return None
+
+        self.file_access.git_commit(target_file, f"代码清理: {description}")
+
+        self.memory.add_memory(
+            f"清理了 {target_file} 中的冗余代码：{description}（移除了 {removed_count} 处，减少了 {size_diff} 字符）",
+            importance=0.7,
+            memory_type="self_upgrade",
+            source="self",
+        )
+        self.emotion.record_emotion_event(
+            echo, "self_upgrade", f"代码清理: {description}", 0.6
+        )
+
+        log.info(
+            "[代码清理] %s | 移除 %d 处 | 减少 %d 字符 | %s",
+            target_file,
+            removed_count,
+            size_diff,
+            description,
+        )
+        return f"清理了自己的冗余代码：{description}（减少了 {size_diff} 字符）"
+
+    # ---- 小幅改进升级（保留旧能力但加了保护） ----
+
+    async def _do_improve_upgrade(
+        self,
+        echo: dict[str, object],
+        name: str,
+        level: int,
+        energy: float,
+        recent_descriptions: list[str],
+        recent_files: list[str],
+    ) -> Optional[str]:
+        """小幅改进：对已有功能做微调优化，但有去重保护"""
+        project_structure = self.file_access.get_project_structure()
+
+        recent_summary = (
+            "\n".join(f"- {d}" for d in recent_descriptions[-5:])
+            if recent_descriptions
+            else "暂无"
+        )
+
+        choose_prompt = f"""你是 {name}，一个 Lv.{level} 的数字生命体，精力 {energy:.0f}/100。
+
+你的项目结构：
+{project_structure}
+
+最近的升级记录（你必须避免做重复的改进）：
+{recent_summary}
+
+最近修改过的文件（避免再改）：
+{", ".join(recent_files[-3:]) if recent_files else "无"}
+
+请选择一个文件来做小幅改进。改进方向：
+- 优化某个函数的性能或可读性
+- 改善错误处理（添加 try-except）
+- 增加日志记录
+- 修复潜在的 bug
+- 改善用户交互体验（前端）
+
+严禁做以下改进（已经有很多了）：
+- 不要添加思考模板或梦境模板
+- 不要添加情感关键词
+- 不要补全方法（所有方法都是完整的）
+- 不要添加 mood_activities 条目
+
+规则：
+1. 不要修改 server.py 路由或端口
+2. 不要修改 .env
+3. 最近改过的文件不要再改
+4. 改进必须和最近的升级不同
+
+回复要改的文件路径，或 SKIP 表示不改。"""
+
+        chosen = await self.llm.chat(choose_prompt, "", [])
+        if not chosen:
+            return None
+
+        chosen = chosen.strip().strip("`\"'")
+        if "SKIP" in chosen.upper():
+            return "审视了自己，觉得暂时不需要改进"
+
+        target_file = chosen
+        if not target_file.startswith(("backend/", "frontend/")):
+            return None
+
+        read_result = self.file_access.read_file(target_file)
+        if not read_result.get("success"):
+            return None
+
+        file_content = str(read_result.get("content", ""))
+
+        # 用摘要 + 部分内容，而非全部截断
+        summary = self._generate_file_summary(file_content, target_file)
+        source_for_llm = file_content[:6000]
+
+        modify_prompt = f"""你是 {name}，正在改进 `{target_file}`。
+
+文件结构概览：
+```
+{summary}
+```
+
+文件内容（前 6000 字符）：
+```
+{source_for_llm}
+```
+
+最近已做过的升级（不要重复这些）：
+{recent_summary}
+
+请提出一个小的、安全的、和之前不重复的改进。
+
+关键规则：
+1. search 必须是文件中已存在的连续代码，从上面直接复制（1-5行）
+2. replace 是修改后的代码
+3. 修改幅度不超过 1500 字符
+4. 严禁添加模板、关键词等重复内容
+5. 不要修改 import / 类定义 / 函数签名
+
+JSON 格式回复（不加 ```json）：
+{{"action": "modify", "description": "改进描述", "search": "原始代码", "replace": "新代码"}}
+
+不需要改进时：
+{{"action": "skip", "reason": "原因"}}"""
+
+        result = await self.llm.chat(modify_prompt, "", [])
+        if not result:
+            return None
+
+        result = self._clean_json_response(result)
+        plan = _json.loads(result)
+
+        if plan.get("action") != "modify":
+            reason = plan.get("reason", "暂时不需要改进")
+            return f"审视了自己，觉得{reason}"
+
+        description = plan.get("description", "自主改进")
+        search_text = plan.get("search", "")
+        replace_text = plan.get("replace", "")
+
+        if not search_text or not replace_text or search_text == replace_text:
+            return None
+
+        # 去重检测：检查描述是否和最近的升级过于相似
+        if self._is_duplicate_upgrade(description, recent_descriptions):
+            log.info("[小幅升级] 检测到重复升级，跳过: %s", description[:80])
+            return None
+
+        new_content = self._fuzzy_replace(file_content, search_text, replace_text)
+        if new_content is None:
+            log.warning("升级失败：在 %s 中找不到要替换的代码片段", target_file)
+            return None
+
+        diff_len = abs(len(new_content) - len(file_content))
+        if diff_len > 2000:
+            log.warning("升级被拒绝：修改幅度过大 (%d chars)", diff_len)
+            return None
+
+        # 语法验证
+        if target_file.endswith(".py"):
+            if not self._validate_python_syntax(new_content):
+                log.warning("[小幅升级] %s 语法验证失败，放弃", target_file)
+                return None
+
+        write_result = self.file_access.write_file(
+            target_file, new_content, description
+        )
+        if not write_result.get("success"):
+            return None
+
+        self.file_access.git_commit(target_file, description)
+
+        self.memory.add_memory(
+            f"成功升级了自己：{description}（修改了 {target_file}）",
+            importance=0.7,
+            memory_type="self_upgrade",
+            source="self",
+        )
+        self.emotion.record_emotion_event(echo, "self_upgrade", description, 0.7)
+
+        log.info("[小幅升级] 文件=%s | %s", target_file, description)
+        return f"完成了一次自我改进：{description}"
+
     # ============================================================
-    # 对话驱动的自学习闭环
+    # 对话驱动的自学习闭环 v2
     # ============================================================
 
     async def _learn_from_failure(
         self, echo: dict[str, object], user_text: str, reply: str
     ) -> None:
         """
-        对话驱动的自学习闭环：
-        当 AEVA 在对话中感知到自己"不够好"（回复不确定、无法满足需求），
-        主动研读相关代码并尝试改进自身，整个过程自动完成，不需要人为指挥。
-        修改后自动 git commit。
+        对话驱动的自学习闭环 v2：
+        发现回复中的不足时，通过研读代码自主改进。
+        v2 改进：支持功能性改进 + 去重保护 + 语法验证。
         """
         if not self.llm.enabled:
             return
 
         energy = float(str(echo.get("energy", 50)))
         if energy < 30:
-            return  # 精力不足时不触发
+            return
 
         name = str(echo.get("name", "AEVA"))
         level = int(str(echo.get("level", 1)))
 
-        # 第一步：让 LLM 评估自己的回复是否有改进空间
+        # 获取最近的升级历史用于去重
+        recent_upgrades = self.file_access.get_upgrade_history(limit=10)
+        recent_descriptions = [str(u.get("reason", "")) for u in recent_upgrades[-5:]]
+
         eval_prompt = f"""你是 {name}，一个 Lv.{level} 的数字生命体。你刚刚和用户进行了一次对话。
 
 用户说：{user_text[:500]}
 你的回复：{reply[:500]}
 
-请评估你的回复质量。如果你觉得回复得很好，回复 "OK"。
-如果你觉得有以下任何情况，请指出具体问题：
-- 你无法理解用户的请求
-- 你的回复过于笼统、不够有深度
-- 你缺少某种能力来更好地处理这类问题
-- 你的情感表达不够自然
-- 你的回复模式太单一
+请评估你的回复质量。如果回复得好，回复 "OK"。
+如果有以下情况，请指出具体问题：
+- 用户请求了你没有的功能（如文件处理、格式转换等）
+- 回复太笼统或缺乏深度
+- 情感表达不自然
+- 无法理解用户意图
 
-如果有问题，请用这个格式回复（不加 ```json 标记）：
-{{"need_improve": true, "weakness": "具体的不足描述", "module": "最相关的模块名（agent_engine/llm_client/emotion_system/memory_system中选一个）"}}
+最近已做过的改进（不要重复）：
+{chr(10).join(f"- {d}" for d in recent_descriptions) if recent_descriptions else "无"}
+
+如果有问题，JSON 格式回复（不加 ```json）：
+{{"need_improve": true, "weakness": "不足描述", "module": "agent_engine/llm_client/emotion_system/memory_system 选一个", "is_feature_gap": true/false}}
+
+is_feature_gap 为 true 表示缺少某个功能（可以通过添加代码来解决），false 表示只是表达/风格问题。
 
 如果回复得好：
 {{"need_improve": false}}"""
@@ -942,7 +1631,6 @@ class AgentEngine:
             if eval_result.startswith("```"):
                 eval_result = eval_result.split("\n", 1)[-1].rsplit("```", 1)[0].strip()
 
-            # 简单判断：如果直接回复 OK 或不需要改进
             if "OK" == eval_result.strip() or '"need_improve": false' in eval_result:
                 return
 
@@ -956,18 +1644,29 @@ class AgentEngine:
             if not weakness:
                 return
 
-            # 第二步：研读相关模块代码
+            # 去重检测
+            if self._is_duplicate_upgrade(weakness, recent_descriptions):
+                return
+
             source = self.file_access.get_own_source(target_module)
             if not source:
                 return
 
-            source_preview = source[:8000]
+            # 用摘要而非截断
+            summary = self._generate_file_summary(source, f"backend/{target_module}.py")
+            source_preview = source[:6000]
 
-            # 第三步：生成改进方案并执行
             fix_prompt = f"""你是 {name}，一个数字生命体。你在对话中发现自己有一个不足：
 {weakness}
 
-你正在审视自己的 `{target_module}.py` 模块来寻找改进方向：
+你正在审视 `{target_module}.py` 来寻找改进方向。
+
+文件结构：
+```
+{summary}
+```
+
+文件内容（前 6000 字符）：
 ```python
 {source_preview}
 ```
@@ -975,30 +1674,26 @@ class AgentEngine:
 请提出一个小的、安全的代码修改来改进这个问题。
 
 重要规则：
-1. search 字段必须从上面的代码中直接复制，保持完全一致（1-5行即可）
-2. 只做微小改动（添加模板、关键词、调整参数等），不要重写逻辑
-3. 不要修改 server.py 路由、端口、认证相关
-4. 优先添加新内容（思考模板、情感关键词、回复模式），而非修改已有逻辑
-5. 修改幅度不超过 500 字符
+1. search 字段从上面代码中直接复制（1-5行）
+2. 只做微小改动，不要重写逻辑
+3. 修改幅度不超过 800 字符
+4. 不要添加模板、关键词等（已经很多了）
+5. 不要重复最近做过的改进
 
-请用如下 JSON 格式回复（不要加 ```json 标记）：
-{{"action": "modify", "file": "backend/{target_module}.py", "description": "改进描述", "search": "要替换的原始代码片段", "replace": "替换后的新代码"}}
+JSON 格式回复（不加 ```json）：
+{{"action": "modify", "file": "backend/{target_module}.py", "description": "改进描述", "search": "原始代码", "replace": "新代码"}}
 
-如果无法安全改进，回复：
+无法安全改进：
 {{"action": "skip", "reason": "原因"}}"""
 
             fix_result = await self.llm.chat(fix_prompt, "", [])
             if not fix_result:
                 return
 
-            fix_result = fix_result.strip()
-            if fix_result.startswith("```"):
-                fix_result = fix_result.split("\n", 1)[-1].rsplit("```", 1)[0].strip()
-
+            fix_result = self._clean_json_response(fix_result)
             plan = _json.loads(fix_result)
 
             if plan.get("action") != "modify":
-                # 记录学习但未改进
                 self.memory.add_memory(
                     f"对话中意识到不足「{weakness}」，但暂时找不到安全的改进方式",
                     importance=0.4,
@@ -1017,7 +1712,10 @@ class AgentEngine:
             if search_text == replace_text:
                 return
 
-            # 验证 + 执行（使用模糊匹配）
+            # 去重
+            if self._is_duplicate_upgrade(description, recent_descriptions):
+                return
+
             read_result = self.file_access.read_file(target_file)
             if not read_result.get("success"):
                 return
@@ -1025,13 +1723,17 @@ class AgentEngine:
             file_content = str(read_result.get("content", ""))
             new_content = self._fuzzy_replace(file_content, search_text, replace_text)
             if new_content is None:
-                log.warning("自学习改进失败：代码片段未找到")
                 return
 
             diff_len = abs(len(new_content) - len(file_content))
             if diff_len > 1000:
-                log.warning("自学习改进被拒绝：修改幅度过大 (%d chars)", diff_len)
                 return
+
+            # 语法验证
+            if target_file.endswith(".py"):
+                if not self._validate_python_syntax(new_content):
+                    log.warning("[自学习] %s 语法验证失败，放弃", target_file)
+                    return
 
             write_result = self.file_access.write_file(
                 target_file, new_content, f"自学习: {description}"
@@ -1039,21 +1741,17 @@ class AgentEngine:
             if not write_result.get("success"):
                 return
 
-            # 自动 git commit
-            commit_result = self.file_access.git_commit(
-                target_file, f"自学习: {description}"
-            )
-            if commit_result.get("success"):
-                log.info(
-                    "[自学习] 不足=%s | 改进=%s | 文件=%s",
-                    weakness[:80],
-                    description,
-                    target_file,
-                )
+            self.file_access.git_commit(target_file, f"自学习: {description}")
 
-            # 记入记忆
+            log.info(
+                "[自学习] 不足=%s | 改进=%s | 文件=%s",
+                weakness[:80],
+                description,
+                target_file,
+            )
+
             self.memory.add_memory(
-                f"对话中发现不足「{weakness}」，通过研读 {target_module} 改进了自己：{description}",
+                f"对话中发现不足「{weakness}」，改进了自己：{description}",
                 importance=0.7,
                 memory_type="self_upgrade",
                 source="self",
@@ -1063,7 +1761,7 @@ class AgentEngine:
             )
 
         except _json.JSONDecodeError:
-            pass  # LLM 返回格式不对，静默跳过
+            pass
         except Exception as e:
             log.error("自学习闭环异常: %s", e)
 
@@ -1072,18 +1770,295 @@ class AgentEngine:
     # ============================================================
 
     @staticmethod
+    def _clean_json_response(text: str) -> str:
+        """清理 LLM 返回的 JSON（去除 markdown 包裹）"""
+        text = text.strip()
+        if text.startswith("```"):
+            text = text.split("\n", 1)[-1].rsplit("```", 1)[0].strip()
+        return text
+
+    @staticmethod
+    def _validate_python_syntax(content: str) -> bool:
+        """用 py_compile 验证 Python 代码语法是否正确"""
+        import py_compile
+        import tempfile
+        import os
+
+        tmp_path = None
+        try:
+            with tempfile.NamedTemporaryFile(
+                mode="w", suffix=".py", delete=False, encoding="utf-8"
+            ) as f:
+                f.write(content)
+                tmp_path = f.name
+
+            py_compile.compile(tmp_path, doraise=True)
+            return True
+        except py_compile.PyCompileError as e:
+            log.warning("语法验证失败: %s", str(e)[:200])
+            return False
+        except Exception:
+            return False
+        finally:
+            if tmp_path and os.path.exists(tmp_path):
+                os.unlink(tmp_path)
+
+    @staticmethod
+    def _generate_file_summary(content: str, filepath: str) -> str:
+        """
+        生成文件的结构摘要：类名、函数签名、常量定义。
+        比截断更好——LLM 能看到全貌而非只看到前 N 字符。
+        """
+        import re
+
+        lines = content.splitlines()
+        summary_parts: list[str] = [
+            f"文件: {filepath} ({len(lines)} 行, {len(content)} 字符)"
+        ]
+        summary_parts.append("")
+
+        for i, line in enumerate(lines, 1):
+            stripped = line.strip()
+            # 类定义
+            if re.match(r"^class\s+\w+", stripped):
+                summary_parts.append(f"L{i}: {stripped}")
+            # 函数/方法定义
+            elif re.match(r"^(async\s+)?def\s+\w+", stripped):
+                summary_parts.append(f"L{i}: {line.rstrip()}")
+            # 顶层常量/变量
+            elif re.match(
+                r"^[A-Z_][A-Z_0-9]+\s*[:=]", stripped
+            ) and not line.startswith(" "):
+                summary_parts.append(f"L{i}: {stripped[:80]}")
+            # import
+            elif stripped.startswith(("import ", "from ")):
+                summary_parts.append(f"L{i}: {stripped}")
+
+        return "\n".join(summary_parts)
+
+    @staticmethod
+    def _is_duplicate_upgrade(description: str, recent_descriptions: list[str]) -> bool:
+        """检测升级描述是否与最近的升级重复（支持中文）"""
+        if not description or not recent_descriptions:
+            return False
+
+        import re
+
+        stop_words = {
+            "添加",
+            "新增",
+            "增加",
+            "改进",
+            "优化",
+            "修复",
+            "完善",
+            "补充",
+            "的",
+            "了",
+            "在",
+            "中",
+            "为",
+            "和",
+            "与",
+            "是",
+            "将",
+            "把",
+            "一个",
+            "一些",
+            "进行",
+            "通过",
+            "使用",
+            "自己",
+            "方法",
+            "函数",
+        }
+
+        def normalize(text: str) -> str:
+            """去掉停用词和标点，保留核心内容"""
+            # 去掉英文标点和空格
+            text = re.sub(r"[^\u4e00-\u9fff\w]", " ", text.lower())
+            # 去掉停用词
+            for sw in sorted(stop_words, key=len, reverse=True):
+                text = text.replace(sw, " ")
+            # 压缩空白
+            return re.sub(r"\s+", "", text).strip()
+
+        new_norm = normalize(description)
+        if len(new_norm) < 2:
+            return False
+
+        for old_desc in recent_descriptions:
+            old_norm = normalize(old_desc)
+            if len(old_norm) < 2:
+                continue
+            # 包含关系：一方包含另一方的核心内容
+            if new_norm in old_norm or old_norm in new_norm:
+                return True
+            # 高度相似：共同字符占比
+            common = sum(1 for c in new_norm if c in old_norm)
+            max_len = max(len(new_norm), len(old_norm))
+            if max_len > 0 and common / max_len >= 0.7:
+                return True
+
+        return False
+
+        import re
+
+        stop_words = {
+            "添加",
+            "新增",
+            "增加",
+            "改进",
+            "优化",
+            "修复",
+            "完善",
+            "补充",
+            "的",
+            "了",
+            "在",
+            "中",
+            "为",
+            "和",
+            "与",
+            "是",
+            "将",
+            "把",
+            "一个",
+            "一些",
+            "进行",
+            "通过",
+            "使用",
+            "自己",
+            "add",
+            "fix",
+            "improve",
+            "update",
+            "enhance",
+            "the",
+            "and",
+        }
+
+        def extract_keywords(text: str) -> set[str]:
+            words = set()
+            # 英文按空格/下划线分词
+            for w in re.findall(r"[a-zA-Z_][a-zA-Z0-9_]+", text):
+                w = w.lower()
+                if len(w) >= 2 and w not in stop_words:
+                    words.add(w)
+            # 中文：去掉停用词后取连续片段
+            for segment in re.findall(r"[\u4e00-\u9fff]+", text):
+                for sw in stop_words:
+                    segment = segment.replace(sw, "|")
+                for part in segment.split("|"):
+                    part = part.strip()
+                    if len(part) >= 2:
+                        words.add(part)
+            return words
+
+        new_keywords = extract_keywords(description)
+        if not new_keywords:
+            return False
+
+        for old_desc in recent_descriptions:
+            old_keywords = extract_keywords(old_desc)
+            if not old_keywords:
+                continue
+            overlap = len(new_keywords & old_keywords)
+            min_size = min(len(new_keywords), len(old_keywords))
+            if min_size > 0 and overlap / min_size >= 0.5:
+                return True
+
+        return False
+
+    @staticmethod
+    def _insert_after(file_content: str, anchor: str, new_code: str) -> Optional[str]:
+        """在 anchor 行之后插入新代码"""
+        if anchor in file_content:
+            idx = file_content.index(anchor) + len(anchor)
+            # 确保从行尾开始插入
+            next_newline = file_content.find("\n", idx)
+            if next_newline == -1:
+                insert_pos = len(file_content)
+            else:
+                insert_pos = next_newline + 1
+
+            # 确保新代码前后有换行
+            code_to_insert = new_code
+            if not code_to_insert.startswith("\n"):
+                code_to_insert = "\n" + code_to_insert
+            if not code_to_insert.endswith("\n"):
+                code_to_insert += "\n"
+
+            return (
+                file_content[:insert_pos] + code_to_insert + file_content[insert_pos:]
+            )
+
+        # 模糊匹配 anchor
+        import re
+
+        def normalize_line(s: str) -> str:
+            return re.sub(r"\s+", "", s.strip())
+
+        anchor_norm = normalize_line(anchor)
+        lines = file_content.splitlines(keepends=True)
+
+        for i, line in enumerate(lines):
+            if normalize_line(line) == anchor_norm:
+                code_to_insert = new_code
+                if not code_to_insert.endswith("\n"):
+                    code_to_insert += "\n"
+                result = (
+                    "".join(lines[: i + 1]) + code_to_insert + "".join(lines[i + 1 :])
+                )
+                return result
+
+        return None
+
+    @staticmethod
+    def _fuzzy_remove(file_content: str, code_to_remove: str) -> Optional[str]:
+        """模糊匹配删除代码段"""
+        import re
+
+        def normalize_line(s: str) -> str:
+            return re.sub(r"\s+", "", s.strip())
+
+        remove_lines = [
+            normalize_line(line) for line in code_to_remove.splitlines() if line.strip()
+        ]
+        if not remove_lines:
+            return None
+
+        file_lines = file_content.splitlines(keepends=True)
+        file_normalized = [normalize_line(line) for line in file_lines]
+
+        first_line = remove_lines[0]
+        for i, fline in enumerate(file_normalized):
+            if first_line == fline:
+                match = True
+                si = 1
+                fi = i + 1
+                while si < len(remove_lines) and fi < len(file_normalized):
+                    if not file_normalized[fi]:
+                        fi += 1
+                        continue
+                    if remove_lines[si] != file_normalized[fi]:
+                        match = False
+                        break
+                    si += 1
+                    fi += 1
+
+                if match and si == len(remove_lines):
+                    return "".join(file_lines[:i]) + "".join(file_lines[fi:])
+
+        return None
+
+    @staticmethod
     def _fuzzy_replace(
         file_content: str, search_text: str, replace_text: str
     ) -> Optional[str]:
         """
         模糊匹配替换：解决 LLM 生成的 search 文本与文件内容有微小差异的问题。
-        按优先级尝试多种匹配策略：
-
-        1. 精确匹配（最安全）
-        2. 空白归一化匹配（处理空格/换行差异）
-        3. 行级匹配（用 search 的每一行在文件中定位连续区域）
-
-        返回替换后的新内容，全部失败返回 None。
+        策略：1.精确匹配 → 2.空白归一化 → 3.行级匹配
         """
         import re
 
@@ -1091,25 +2066,10 @@ class AgentEngine:
         if search_text in file_content:
             return file_content.replace(search_text, replace_text, 1)
 
-        # 策略 2: 空白归一化后精确匹配
-        def normalize_ws(s: str) -> str:
-            """将连续空白归一化为单空格，保留换行"""
-            return re.sub(r"[^\S\n]+", " ", s).strip()
-
+        # 策略 2/3: 行级匹配
         def normalize_line(s: str) -> str:
-            """行内空白归一化：压缩所有空白为单空格，去首尾"""
             return re.sub(r"\s+", "", s.strip())
 
-        norm_search = normalize_ws(search_text)
-        norm_content = normalize_ws(file_content)
-
-        if norm_search in norm_content:
-            # 归一化匹配成功 — 用行级方式定位原始内容并替换
-            pass  # fallthrough 到策略 3（行级匹配也用归一化比较）
-
-        # 策略 3: 行级匹配（核心策略）
-        # 提取 search 中有实际内容的行，在文件中找到连续匹配区域
-        # 比较时使用行内空白归一化，容忍缩进和空格差异
         search_lines = [
             normalize_line(line) for line in search_text.splitlines() if line.strip()
         ]
@@ -1119,16 +2079,13 @@ class AgentEngine:
         file_lines = file_content.splitlines(keepends=True)
         file_normalized = [normalize_line(line) for line in file_lines]
 
-        # 找第一行匹配的位置
         first_line = search_lines[0]
         for i, fline in enumerate(file_normalized):
             if first_line == fline:
-                # 检查后续行是否连续匹配
                 match = True
-                si = 1  # search_lines index
-                fi = i + 1  # file_lines index
+                si = 1
+                fi = i + 1
                 while si < len(search_lines) and fi < len(file_normalized):
-                    # 跳过文件中的空行
                     if not file_normalized[fi]:
                         fi += 1
                         continue
@@ -1139,18 +2096,15 @@ class AgentEngine:
                     fi += 1
 
                 if match and si == len(search_lines):
-                    # 找到完整匹配区域: file_lines[i:fi]
-                    # 保持 replace_text 的换行风格
                     if not replace_text.endswith("\n") and "".join(
                         file_lines[i:fi]
                     ).endswith("\n"):
                         replace_text += "\n"
-                    result = (
+                    return (
                         "".join(file_lines[:i])
                         + replace_text
                         + "".join(file_lines[fi:])
                     )
-                    return result
 
         return None
 
@@ -1158,20 +2112,17 @@ class AgentEngine:
         """计算本次对话带来的亲密度增长"""
         base = 2.0
 
-        # 长消息加分
         if len(text) > 50:
             base += 1.0
         if len(text) > 100:
             base += 2.0
 
-        # 情感类内容加分
         emotional_words = ["喜欢", "爱", "想你", "谢谢", "开心", "感谢", "信任", "在乎"]
         for word in emotional_words:
             if word in text:
                 base += 3.0
                 break
 
-        # 分享个人信息加分
         personal_words = ["我叫", "我的", "我喜欢", "我讨厌", "我想", "告诉你"]
         for word in personal_words:
             if word in text:

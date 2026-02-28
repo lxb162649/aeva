@@ -270,17 +270,6 @@ class MemorySystem:
                 old_strength = float(str(m.get("strength", 1.0)))
                 m["strength"] = round(min(1.0, old_strength + 0.1), 4)
 
-        self.store._write_json(self.store.memories_path, all_memories)= datetime.now().isoformat()
-
-        for m in all_memories:
-            if str(m.get("id")) in recalled_ids:
-                # 增加回忆次数
-                m["recall_count"] = int(str(m.get("recall_count", 0))) + 1
-                m["last_recall_time"] = now_str
-                # 强化记忆强度
-                current = float(str(m.get("strength", 0.5)))
-                m["strength"] = min(1.0, current + 0.15)
-
         self.store._write_json(self.store.memories_path, all_memories)
 
     # ============================================================

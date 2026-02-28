@@ -299,10 +299,20 @@ class FileAccess:
         """记录一次文件修改"""
         import json
 
+        # 从 reason 中提取升级模式
+        mode = "improve"  # 默认
+        if reason.startswith("蓝图升级"):
+            mode = "blueprint"
+        elif reason.startswith("代码清理"):
+            mode = "cleanup"
+        elif reason.startswith("自学习"):
+            mode = "learn"
+
         entry = {
             "time": datetime.now().isoformat(),
             "file": filepath,
             "reason": reason or "自主升级",
+            "mode": mode,
             "backup": backup_path,
         }
         self.upgrade_history.append(entry)
