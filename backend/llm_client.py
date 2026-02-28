@@ -22,6 +22,8 @@ LLM_TEMPERATURE: float = float(os.getenv("LLM_TEMPERATURE", "0.85"))
 
 # 超时设置（秒）
 LLM_TIMEOUT: int = int(os.getenv("LLM_TIMEOUT", "30"))
+# 升级等复杂任务的超时（秒），需要更长时间让 LLM 分析代码并生成方案
+LLM_UPGRADE_TIMEOUT: int = int(os.getenv("LLM_UPGRADE_TIMEOUT", "180"))
 
 
 class LLMClient:
@@ -133,6 +135,7 @@ class LLMClient:
         user_text: str,
         system_prompt: str,
         chat_history: list[dict[str, str]],
+        timeout: Optional[int] = None,
     ) -> Optional[str]:
         """
         调用 LLM API 生成回复。
@@ -141,12 +144,15 @@ class LLMClient:
             user_text: 用户最新消息
             system_prompt: AEVA 系统提示词
             chat_history: 最近的对话历史 [{"role": "user"/"assistant", "content": "..."}]
+            timeout: 超时秒数，不传则使用全局默认值 LLM_TIMEOUT
 
         返回:
             LLM 回复文本，失败时返回 None
         """
         if not self.enabled:
             return None
+
+        effective_timeout = timeout or LLM_TIMEOUT
 
         # 构建消息列表
         messages: list[dict[str, str]] = [{"role": "system", "content": system_prompt}]
@@ -160,7 +166,7 @@ class LLMClient:
 
         try:
             t0 = time.monotonic()
-            async with httpx.AsyncClient(timeout=LLM_TIMEOUT) as client:
+            async with httpx.AsyncClient(timeout=effective_timeout) as client:
                 response = await client.post(
                     f"{self.base_url}/chat/completions",
                     headers={
@@ -191,7 +197,7 @@ class LLMClient:
                 return None
 
         except httpx.TimeoutException:
-            log.warning("请求超时 (%ds)", LLM_TIMEOUT)
+            log.warning("请求超时 (%ds)", effective_timeout)
             return None
         except httpx.HTTPStatusError as e:
             log.error(

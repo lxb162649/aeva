@@ -12,7 +12,7 @@ from typing import Optional
 from models import DataStore
 from memory_system import MemorySystem
 from emotion_system import EmotionSystem
-from llm_client import LLMClient
+from llm_client import LLMClient, LLM_UPGRADE_TIMEOUT
 from file_access import FileAccess
 from logger import get_logger
 
@@ -531,6 +531,7 @@ class AgentEngine:
 6. 确保代码缩进正确
 7. 如果需求不可行或超出你的能力范围，设置 feasible 为 false 并解释原因"""
 
+        result = ""
         try:
             # 读取可能需要的文件内容供 LLM 参考
             file_contexts = ""
@@ -549,7 +550,9 @@ class AgentEngine:
                 plan_prompt + "\n\n以下是关键文件的结构概览供参考：" + file_contexts
             )
 
-            result = await self.llm.chat(full_prompt, "", [])
+            result = await self.llm.chat(
+                full_prompt, "", [], timeout=LLM_UPGRADE_TIMEOUT
+            )
             if not result:
                 return "升级方案生成失败（LLM 无响应）。"
 
@@ -611,7 +614,9 @@ class AgentEngine:
 请从文件中找到最合适的插入位置，给出一行已存在的代码作为 anchor。
 只回复那一行代码，不要加其他内容。"""
 
-                    new_anchor = await self.llm.chat(refine_prompt, "", [])
+                    new_anchor = await self.llm.chat(
+                        refine_prompt, "", [], timeout=LLM_UPGRADE_TIMEOUT
+                    )
                     if new_anchor:
                         anchor = new_anchor.strip().strip("`\"'")
 
@@ -713,7 +718,12 @@ class AgentEngine:
             )
             return "\n".join(result_lines)
 
-        except _json.JSONDecodeError:
+        except _json.JSONDecodeError as e:
+            log.warning(
+                "[定向升级] JSON 解析失败: %s | LLM原始返回: %s",
+                e,
+                result[:500] if result else "(空)",
+            )
             return "升级方案生成失败（LLM 返回的不是有效 JSON）。请换个描述方式再试。"
         except Exception as e:
             log.error("用户指令升级异常: %s", e)
@@ -1599,7 +1609,9 @@ class AgentEngine:
 
 请只回复功能 ID（如 paste_upload），不要回复其他内容。"""
 
-        chosen_id = await self.llm.chat(choose_prompt, "", [])
+        chosen_id = await self.llm.chat(
+            choose_prompt, "", [], timeout=LLM_UPGRADE_TIMEOUT
+        )
         if not chosen_id:
             return None
 
@@ -1698,7 +1710,7 @@ action 类型说明：
             modify_prompt + "\n\n以下是文件的完整代码供参考：" + full_files_context
         )
 
-        result = await self.llm.chat(full_prompt, "", [])
+        result = await self.llm.chat(full_prompt, "", [], timeout=LLM_UPGRADE_TIMEOUT)
         if not result:
             return None
 
@@ -1862,7 +1874,9 @@ action 类型说明：
 4. 不要删除注释（除非注释对应的代码已被删除）
 5. 不要修改仍在使用的方法的实现"""
 
-        result = await self.llm.chat(cleanup_prompt, "", [])
+        result = await self.llm.chat(
+            cleanup_prompt, "", [], timeout=LLM_UPGRADE_TIMEOUT
+        )
         if not result:
             return None
 
@@ -1998,7 +2012,7 @@ action 类型说明：
 
 回复要改的文件路径，或 SKIP 表示不改。"""
 
-        chosen = await self.llm.chat(choose_prompt, "", [])
+        chosen = await self.llm.chat(choose_prompt, "", [], timeout=LLM_UPGRADE_TIMEOUT)
         if not chosen:
             return None
 
@@ -2050,7 +2064,7 @@ JSON 格式回复（不加 ```json）：
 不需要改进时：
 {{"action": "skip", "reason": "原因"}}"""
 
-        result = await self.llm.chat(modify_prompt, "", [])
+        result = await self.llm.chat(modify_prompt, "", [], timeout=LLM_UPGRADE_TIMEOUT)
         if not result:
             return None
 
@@ -2158,7 +2172,9 @@ is_feature_gap 为 true 表示缺少某个功能（可以通过添加代码来�
 {{"need_improve": false}}"""
 
         try:
-            eval_result = await self.llm.chat(eval_prompt, "", [])
+            eval_result = await self.llm.chat(
+                eval_prompt, "", [], timeout=LLM_UPGRADE_TIMEOUT
+            )
             if not eval_result:
                 return
 
@@ -2221,7 +2237,9 @@ JSON 格式回复（不加 ```json）：
 无法安全改进：
 {{"action": "skip", "reason": "原因"}}"""
 
-            fix_result = await self.llm.chat(fix_prompt, "", [])
+            fix_result = await self.llm.chat(
+                fix_prompt, "", [], timeout=LLM_UPGRADE_TIMEOUT
+            )
             if not fix_result:
                 return
 
@@ -2306,10 +2324,33 @@ JSON 格式回复（不加 ```json）：
 
     @staticmethod
     def _clean_json_response(text: str) -> str:
-        """清理 LLM 返回的 JSON（去除 markdown 包裹）"""
+        """清理 LLM 返回的 JSON（去除 markdown 包裹、前后多余文字）"""
         text = text.strip()
-        if text.startswith("```"):
-            text = text.split("\n", 1)[-1].rsplit("```", 1)[0].strip()
+
+        # 去除 ```json ... ``` 或 ``` ... ``` 包裹
+        if "```" in text:
+            # 找到第一个 ``` 和最后一个 ```
+            parts = text.split("```")
+            # parts[0] = 前置文字, parts[1] = json/代码块内容, parts[2+] = 后续
+            if len(parts) >= 3:
+                code_block = parts[1]
+                # 去掉可能的语言标记（json、JSON 等）
+                if code_block.startswith(("json", "JSON")):
+                    code_block = code_block.split("\n", 1)[-1]
+                return code_block.strip()
+
+        # 没有 ``` 包裹，尝试提取第一个 { 到最后一个 } 之间的内容
+        first_brace = text.find("{")
+        last_brace = text.rfind("}")
+        if first_brace != -1 and last_brace > first_brace:
+            return text[first_brace : last_brace + 1]
+
+        # 同样处理 [ ... ] 数组格式
+        first_bracket = text.find("[")
+        last_bracket = text.rfind("]")
+        if first_bracket != -1 and last_bracket > first_bracket:
+            return text[first_bracket : last_bracket + 1]
+
         return text
 
     @staticmethod
