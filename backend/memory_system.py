@@ -4,10 +4,10 @@
 # 记忆整合：定期将短期记忆整合为长期记忆
 
 import math
-import random
+
 from datetime import datetime
 from uuid import uuid4
-from typing import Optional
+
 
 from models import DataStore
 from logger import get_logger
