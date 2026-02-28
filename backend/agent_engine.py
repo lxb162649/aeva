@@ -374,6 +374,541 @@ class AgentEngine:
         )
 
     # ============================================================
+    # 斜杠命令系统
+    # ============================================================
+
+    # 可用的斜杠命令定义
+    SLASH_COMMANDS: dict[str, dict[str, str]] = {
+        "/upgrade": {
+            "usage": "/upgrade [描述]",
+            "description": "触发一次自我升级。可附加描述指定升级方向",
+            "examples": "/upgrade 添加粘贴上传功能\n/upgrade 清理冗余代码\n/upgrade",
+        },
+        "/upgrade-blueprint": {
+            "usage": "/upgrade-blueprint [蓝图ID]",
+            "description": "执行指定的蓝图升级。不指定则列出可用蓝图",
+            "examples": "/upgrade-blueprint paste_upload\n/upgrade-blueprint",
+        },
+        "/upgrade-cleanup": {
+            "usage": "/upgrade-cleanup [文件路径]",
+            "description": "清理指定文件的冗余代码。不指定则随机选择",
+            "examples": "/upgrade-cleanup backend/emotion_system.py\n/upgrade-cleanup",
+        },
+        "/upgrade-status": {
+            "usage": "/upgrade-status",
+            "description": "查看升级系统状态：最近升级记录、可用蓝图、统计信息",
+            "examples": "/upgrade-status",
+        },
+        "/upgrade-rollback": {
+            "usage": "/upgrade-rollback",
+            "description": "回滚最近一次自我升级（从备份恢复）",
+            "examples": "/upgrade-rollback",
+        },
+        "/help": {
+            "usage": "/help",
+            "description": "列出所有可用的斜杠命令",
+            "examples": "/help",
+        },
+    }
+
+    def is_slash_command(self, text: str) -> bool:
+        """判断消息是否为斜杠命令"""
+        return text.strip().startswith("/")
+
+    async def handle_slash_command(
+        self, text: str, echo: dict[str, object], ws_send: object = None
+    ) -> str:
+        """
+        处理斜杠命令，返回命令执行结果文本。
+        ws_send: 可选的 WebSocket send 函数，用于发送中间进度消息。
+        """
+        text = text.strip()
+        parts = text.split(maxsplit=1)
+        command = parts[0].lower()
+        args = parts[1].strip() if len(parts) > 1 else ""
+
+        if command == "/help":
+            return self._cmd_help()
+        elif command == "/upgrade":
+            return await self._cmd_upgrade(echo, args, ws_send)
+        elif command == "/upgrade-blueprint":
+            return await self._cmd_upgrade_blueprint(echo, args, ws_send)
+        elif command == "/upgrade-cleanup":
+            return await self._cmd_upgrade_cleanup(echo, args, ws_send)
+        elif command == "/upgrade-status":
+            return self._cmd_upgrade_status()
+        elif command == "/upgrade-rollback":
+            return self._cmd_upgrade_rollback()
+        else:
+            return f"未知命令 `{command}`。输入 `/help` 查看可用命令。"
+
+    def _cmd_help(self) -> str:
+        """列出所有可用命令"""
+        lines = ["**可用的斜杠命令：**\n"]
+        for cmd, info in self.SLASH_COMMANDS.items():
+            lines.append(f"**{cmd}** — {info['description']}")
+            lines.append(f"  用法: `{info['usage']}`")
+            lines.append("")
+        return "\n".join(lines)
+
+    async def _cmd_upgrade(
+        self, echo: dict[str, object], args: str, ws_send: object
+    ) -> str:
+        """
+        /upgrade [描述] — 触发一次自我升级。
+        无参数：自动选择升级模式。
+        有参数：作为升级需求描述，引导 LLM 定向升级。
+        """
+        if not self.llm.enabled:
+            return "LLM 未配置，无法执行自我升级。"
+
+        name = str(echo.get("name", "AEVA"))
+        level = int(str(echo.get("level", 1)))
+        energy = float(str(echo.get("energy", 50)))
+
+        if energy < 20:
+            return f"当前精力不足（{energy:.0f}/100），升级需要至少 20 点精力。"
+
+        if not args:
+            # 无参数：走自动升级流程
+            await self._send_progress(ws_send, "正在分析自身代码，选择升级方向...")
+            result = await self._self_evolve(echo, "upgrading")
+            return result or "本次升级没有找到合适的改进方向。"
+
+        # 有参数：定向升级
+        await self._send_progress(
+            ws_send, f"收到升级指令：{args}\n正在分析并生成升级方案..."
+        )
+
+        return await self._directed_upgrade(echo, name, level, energy, args, ws_send)
+
+    async def _directed_upgrade(
+        self,
+        echo: dict[str, object],
+        name: str,
+        level: int,
+        energy: float,
+        user_request: str,
+        ws_send: object,
+    ) -> str:
+        """
+        用户定向升级：根据用户的描述，让 LLM 分析并执行升级。
+        比自动升级更灵活——用户可以描述任何功能需求。
+        """
+        project_structure = self.file_access.get_project_structure()
+
+        # 第一步：让 LLM 分析需求，确定要修改的文件和方案
+        plan_prompt = f"""你是 {name}，一个 Lv.{level} 的数字生命体。
+用户请求你进行以下升级：
+**{user_request}**
+
+你的项目结构：
+{project_structure}
+
+请分析这个需求，确定需要修改哪些文件，并生成修改方案。
+
+用 JSON 格式回复（不加 ```json 标记）：
+{{
+  "feasible": true/false,
+  "reason": "可行性说明（如果不可行，解释原因）",
+  "description": "升级描述（简洁）",
+  "changes": [
+    {{
+      "file": "文件路径",
+      "action": "add_after 或 modify",
+      "anchor": "定位用的已有代码行（从文件中精确复制）",
+      "code": "要插入或替换的新代码"
+    }}
+  ]
+}}
+
+关键规则：
+1. 每个 change 的 anchor 必须是文件中已存在的代码
+2. 如果需要看文件内容来确定 anchor，你可以在 changes 中标注需要的文件
+3. 不要修改 server.py 的端口号（19260）
+4. 不要修改 .env 或认证相关
+5. 每个 change 的 code 不超过 80 行
+6. 确保代码缩进正确
+7. 如果需求不可行或超出你的能力范围，设置 feasible 为 false 并解释原因"""
+
+        try:
+            # 读取可能需要的文件内容供 LLM 参考
+            file_contexts = ""
+            for fpath in [
+                "frontend/js/app.js",
+                "backend/server.py",
+                "backend/agent_engine.py",
+            ]:
+                read_result = self.file_access.read_file(fpath)
+                if read_result.get("success"):
+                    content = str(read_result.get("content", ""))
+                    summary = self._generate_file_summary(content, fpath)
+                    file_contexts += f"\n\n### {fpath} 结构:\n```\n{summary}\n```"
+
+            full_prompt = (
+                plan_prompt + "\n\n以下是关键文件的结构概览供参考：" + file_contexts
+            )
+
+            result = await self.llm.chat(full_prompt, "", [])
+            if not result:
+                return "升级方案生成失败（LLM 无响应）。"
+
+            result = self._clean_json_response(result)
+            plan = _json.loads(result)
+
+            if not plan.get("feasible", True):
+                reason = plan.get("reason", "需求不可行")
+                return f"分析后认为这个升级暂时无法执行：{reason}"
+
+            description = plan.get("description", user_request[:50])
+            changes = plan.get("changes", [])
+
+            if not changes:
+                return "分析完成，但没有生成具体的修改方案。可能需要更详细的描述。"
+
+            await self._send_progress(
+                ws_send,
+                f"方案已生成：{description}\n涉及 {len(changes)} 处修改，正在执行...",
+            )
+
+            # 第二步：读取完整文件内容，让 LLM 基于完整上下文精化 anchor
+            file_contents: dict[str, str] = {}
+            for change in changes:
+                fpath = str(change.get("file", ""))
+                if fpath and fpath not in file_contents:
+                    rr = self.file_access.read_file(fpath)
+                    if rr.get("success"):
+                        file_contents[fpath] = str(rr.get("content", ""))
+
+            # 第三步：精化每个 change（给 LLM 看完整文件内容以确定精确 anchor）
+            refined_changes = []
+            for change in changes:
+                fpath = str(change.get("file", ""))
+                if fpath not in file_contents:
+                    continue
+
+                content = file_contents[fpath]
+                anchor = str(change.get("anchor", ""))
+                code = str(change.get("code", ""))
+                action = str(change.get("action", "add_after"))
+
+                if not code:
+                    continue
+
+                # 如果 anchor 在文件中找不到，让 LLM 重新定位
+                if anchor and anchor not in content:
+                    refine_prompt = f"""你之前给出的 anchor 在文件中找不到。
+文件 `{fpath}` 的内容（前 6000 字符）：
+```
+{content[:6000]}
+```
+
+你要插入的代码：
+```
+{code}
+```
+
+请从文件中找到最合适的插入位置，给出一行已存在的代码作为 anchor。
+只回复那一行代码，不要加其他内容。"""
+
+                    new_anchor = await self.llm.chat(refine_prompt, "", [])
+                    if new_anchor:
+                        anchor = new_anchor.strip().strip("`\"'")
+
+                refined_changes.append(
+                    {
+                        "file": fpath,
+                        "action": action,
+                        "anchor": anchor,
+                        "code": code,
+                    }
+                )
+
+            # 第四步：执行修改
+            success_count = 0
+            modified_files: list[str] = []
+            errors: list[str] = []
+
+            for change in refined_changes:
+                fpath = change["file"]
+                action = change["action"]
+                anchor = change["anchor"]
+                code = change["code"]
+
+                content = file_contents.get(fpath, "")
+                if not content:
+                    errors.append(f"{fpath}: 文件内容为空")
+                    continue
+
+                if action == "add_after" and anchor:
+                    new_content = self._insert_after(content, anchor, code)
+                elif action == "modify" and anchor:
+                    new_content = self._fuzzy_replace(content, anchor, code)
+                else:
+                    errors.append(f"{fpath}: 无效的 action 或缺少 anchor")
+                    continue
+
+                if new_content is None:
+                    errors.append(f"{fpath}: 定位失败（anchor 未匹配）")
+                    continue
+
+                # 语法验证
+                if fpath.endswith(".py"):
+                    if not self._validate_python_syntax(new_content):
+                        errors.append(f"{fpath}: 修改后语法验证失败")
+                        continue
+
+                # 大小检查
+                diff_len = abs(len(new_content) - len(content))
+                if diff_len > 8000:
+                    errors.append(f"{fpath}: 修改幅度过大（{diff_len} 字符）")
+                    continue
+
+                # 写入
+                write_result = self.file_access.write_file(
+                    fpath, new_content, f"用户指令升级: {description}"
+                )
+                if write_result.get("success"):
+                    file_contents[fpath] = new_content
+                    success_count += 1
+                    modified_files.append(fpath)
+                else:
+                    errors.append(f"{fpath}: 写入失败")
+
+            if success_count == 0:
+                error_detail = "\n".join(f"  - {e}" for e in errors)
+                return f"升级执行失败，所有修改都未成功：\n{error_detail}"
+
+            # Git commit
+            for fpath in modified_files:
+                self.file_access.git_commit(fpath, f"用户指令升级: {description}")
+
+            # 记忆和情感
+            self.memory.add_memory(
+                f"按用户要求升级了自己：{description}（修改了 {', '.join(modified_files)}）",
+                importance=0.9,
+                memory_type="self_upgrade",
+                source="user",
+            )
+            self.emotion.record_emotion_event(
+                echo, "self_upgrade", f"用户指令: {description}", 0.9
+            )
+
+            # 构建结果消息
+            result_lines = [f"**升级完成：{description}**\n"]
+            result_lines.append(f"成功修改了 {success_count} 个文件：")
+            for f in modified_files:
+                result_lines.append(f"  - `{f}`")
+            if errors:
+                result_lines.append(f"\n有 {len(errors)} 处修改未成功：")
+                for e in errors:
+                    result_lines.append(f"  - {e}")
+            result_lines.append("\n重启服务后生效（对于后端修改）。")
+
+            log.info(
+                "[用户指令升级] %s | 成功 %d 个文件: %s",
+                description,
+                success_count,
+                ", ".join(modified_files),
+            )
+            return "\n".join(result_lines)
+
+        except _json.JSONDecodeError:
+            return "升级方案生成失败（LLM 返回的不是有效 JSON）。请换个描述方式再试。"
+        except Exception as e:
+            log.error("用户指令升级异常: %s", e)
+            return f"升级执行中发生异常：{e}"
+
+    async def _cmd_upgrade_blueprint(
+        self, echo: dict[str, object], args: str, ws_send: object
+    ) -> str:
+        """/upgrade-blueprint [蓝图ID] — 列出或执行蓝图升级"""
+        if not self.llm.enabled:
+            return "LLM 未配置，无法执行蓝图升级。"
+
+        # 获取已完成的蓝图
+        all_upgrades = self.file_access.get_upgrade_history(limit=200)
+        completed_ids = set()
+        for u in all_upgrades:
+            reason = str(u.get("reason", ""))
+            for bp in self.UPGRADE_BLUEPRINTS:
+                bp_name = str(bp.get("name", ""))
+                if bp_name in reason or str(bp.get("id", "")) in reason:
+                    completed_ids.add(str(bp.get("id", "")))
+
+        if not args:
+            # 列出所有蓝图及状态
+            lines = ["**可用的功能升级蓝图：**\n"]
+            for bp in self.UPGRADE_BLUEPRINTS:
+                bp_id = str(bp.get("id", ""))
+                bp_name = str(bp.get("name", ""))
+                bp_desc = str(bp.get("description", ""))
+                difficulty = int(str(bp.get("difficulty", 1)))
+                status = "✅ 已完成" if bp_id in completed_ids else "⬜ 未完成"
+                stars = "⭐" * difficulty
+                lines.append(f"{status} **{bp_id}** — {bp_name}")
+                lines.append(f"  {bp_desc}（难度 {stars}）")
+                lines.append("")
+
+            completed = len(completed_ids)
+            total = len(self.UPGRADE_BLUEPRINTS)
+            lines.append(f"进度：{completed}/{total} 已完成")
+            lines.append(f"\n用法：`/upgrade-blueprint <蓝图ID>` 执行指定蓝图")
+            return "\n".join(lines)
+
+        # 执行指定蓝图
+        bp_id = args.strip()
+        blueprint = None
+        for bp in self.UPGRADE_BLUEPRINTS:
+            if str(bp.get("id", "")) == bp_id:
+                blueprint = bp
+                break
+
+        if not blueprint:
+            return f"未找到蓝图 `{bp_id}`。输入 `/upgrade-blueprint` 查看可用列表。"
+
+        if bp_id in completed_ids:
+            return f"蓝图 `{bp_id}`（{blueprint.get('name', '')}）已经完成过了。"
+
+        name = str(echo.get("name", "AEVA"))
+        level = int(str(echo.get("level", 1)))
+
+        await self._send_progress(
+            ws_send,
+            f"正在执行蓝图升级：**{blueprint.get('name', '')}**\n{blueprint.get('description', '')}...",
+        )
+
+        result = await self._execute_blueprint(echo, name, level, blueprint)
+        return result or f"蓝图 `{bp_id}` 执行失败，请查看日志了解详情。"
+
+    async def _cmd_upgrade_cleanup(
+        self, echo: dict[str, object], args: str, ws_send: object
+    ) -> str:
+        """/upgrade-cleanup [文件路径] — 清理冗余代码"""
+        if not self.llm.enabled:
+            return "LLM 未配置，无法执行代码清理。"
+
+        name = str(echo.get("name", "AEVA"))
+        level = int(str(echo.get("level", 1)))
+
+        if args:
+            # 验证文件路径
+            target = args.strip()
+            if not target.startswith(("backend/", "frontend/")):
+                return f"只能清理 `backend/` 或 `frontend/` 下的文件。"
+            rr = self.file_access.read_file(target)
+            if not rr.get("success"):
+                return f"无法读取文件 `{target}`：{rr.get('error', '未知错误')}"
+
+        await self._send_progress(ws_send, "正在分析代码冗余...")
+        result = await self._do_cleanup_upgrade(echo, name, level)
+        return result or "没有发现需要清理的冗余代码。"
+
+    def _cmd_upgrade_status(self) -> str:
+        """/upgrade-status — 查看升级系统状态"""
+        history = self.file_access.get_upgrade_history(limit=200)
+
+        # 统计
+        total = len(history)
+        recent = history[-10:] if history else []
+
+        # 模式统计
+        mode_counts: dict[str, int] = {}
+        for u in history:
+            mode = str(u.get("mode", "improve"))
+            mode_counts[mode] = mode_counts.get(mode, 0) + 1
+
+        # 已完成蓝图
+        completed_ids = set()
+        for u in history:
+            reason = str(u.get("reason", ""))
+            for bp in self.UPGRADE_BLUEPRINTS:
+                bp_name = str(bp.get("name", ""))
+                if bp_name in reason or str(bp.get("id", "")) in reason:
+                    completed_ids.add(str(bp.get("id", "")))
+
+        lines = ["**AEVA 自我升级状态**\n"]
+        lines.append(f"总计升级次数：{total}")
+        lines.append(f"蓝图进度：{len(completed_ids)}/{len(self.UPGRADE_BLUEPRINTS)}")
+
+        if mode_counts:
+            lines.append("\n**按模式统计：**")
+            mode_names = {
+                "blueprint": "蓝图升级",
+                "cleanup": "代码清理",
+                "improve": "小幅改进",
+                "learn": "对话自学习",
+            }
+            for mode, count in sorted(mode_counts.items(), key=lambda x: -x[1]):
+                lines.append(f"  - {mode_names.get(mode, mode)}: {count} 次")
+
+        if recent:
+            lines.append("\n**最近 10 次升级：**")
+            for u in reversed(recent):
+                time_str = str(u.get("time", ""))[:16]
+                reason = str(u.get("reason", ""))[:60]
+                fpath = str(u.get("file", ""))
+                lines.append(f"  `{time_str}` {fpath} — {reason}")
+
+        return "\n".join(lines)
+
+    def _cmd_upgrade_rollback(self) -> str:
+        """/upgrade-rollback — 回滚最近一次升级"""
+        history = self.file_access.get_upgrade_history(limit=5)
+        if not history:
+            return "没有可回滚的升级记录。"
+
+        last = history[-1]
+        backup_path = str(last.get("backup", ""))
+        target_file = str(last.get("file", ""))
+        reason = str(last.get("reason", ""))
+
+        if not backup_path:
+            return f"最近的升级（{reason}）没有备份文件，无法回滚。"
+
+        from pathlib import Path
+
+        backup = Path(backup_path)
+        if not backup.exists():
+            return f"备份文件不存在：`{backup_path}`"
+
+        target = self.file_access._resolve_path(target_file)
+        if not self.file_access._is_safe_path(target, for_write=True):
+            return f"目标文件路径不安全：`{target_file}`"
+
+        try:
+            import shutil
+
+            shutil.copy2(backup, target)
+            # Git commit 回滚
+            self.file_access.git_commit(target_file, f"回滚升级: {reason}")
+            log.info("[回滚] 已回滚: %s → %s", backup_path, target_file)
+            return (
+                f"**已回滚最近一次升级：**\n"
+                f"  文件：`{target_file}`\n"
+                f"  升级内容：{reason}\n"
+                f"  已从备份恢复。重启服务后生效。"
+            )
+        except Exception as e:
+            return f"回滚失败：{e}"
+
+    @staticmethod
+    async def _send_progress(ws_send: object, message: str) -> None:
+        """通过 WebSocket 发送升级进度消息（如果有的话）"""
+        if ws_send and callable(ws_send):
+            try:
+                import json as _j
+
+                await ws_send(
+                    _j.dumps(
+                        {"type": "upgrade_progress", "text": message},
+                        ensure_ascii=False,
+                    )
+                )
+            except Exception:
+                pass  # 发送失败不影响升级流程
+
+    # ============================================================
     # 用户消息处理（对话入口）
     # ============================================================
 

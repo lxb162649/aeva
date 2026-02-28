@@ -8,6 +8,8 @@ const MAX_CHARS = 20000;
 let ws = null;
 let isSending = false;
 let pendingFiles = []; // 待发送的文件列表
+let slashCommands = {}; // 斜杠命令定义缓存
+let slashMenuIndex = -1; // 当前选中的命令菜单项索引
 
 // ============================================================
 // 初始化
@@ -16,10 +18,12 @@ document.addEventListener("DOMContentLoaded", () => {
   loadStatus();
   loadLogs();
   loadMemories();
+  loadSlashCommands();
   connectChat();
   initParticles();
   initFileUpload();
   initTextarea();
+  initSlashMenu();
 
   // 定时刷新
   setInterval(loadStatus, 10000);
@@ -180,9 +184,17 @@ function connectChat() {
   ws.onmessage = (event) => {
     try {
       const data = JSON.parse(event.data);
+
+      // 升级进度消息（实时更新）
+      if (data.type === "upgrade_progress") {
+        addUpgradeProgress(data.text);
+        return;
+      }
+
       if (data.type === "reply") {
-        // 移除打字指示器
+        // 移除打字指示器和升级进度
         removeTypingIndicator();
+        clearUpgradeProgress();
         isSending = false;
         document.getElementById("chatSendBtn").disabled = false;
 
@@ -256,6 +268,9 @@ function sendMessage() {
   const input = document.getElementById("chatInput");
   const text = input.value.trim();
   if ((!text && pendingFiles.length === 0) || isSending) return;
+
+  // 隐藏斜杠命令菜单
+  hideSlashMenu();
 
   if (!ws || ws.readyState !== WebSocket.OPEN) {
     addMessage("aeva", "[连接已断开，正在重连...]");
@@ -513,21 +528,59 @@ async function loadMemories() {
 }
 
 // ============================================================
-// 键盘事件：Enter 发送，Ctrl/Shift+Enter 换行
+// 键盘事件：Enter 发送，Ctrl/Shift+Enter 换行，方向键控制命令菜单
 // ============================================================
 document.addEventListener("keydown", (e) => {
   if (
-    e.key === "Enter" &&
     document.activeElement &&
     document.activeElement.id === "chatInput"
   ) {
-    if (e.ctrlKey || e.shiftKey) {
-      // Ctrl+Enter 或 Shift+Enter → 换行（textarea 自然支持）
-      return; // 不阻止默认行为，让 textarea 插入换行
+    const menu = document.getElementById("slashMenu");
+    const menuVisible = menu && menu.style.display === "block";
+
+    // 命令菜单可见时，拦截方向键和 Tab
+    if (menuVisible) {
+      if (e.key === "ArrowDown") {
+        e.preventDefault();
+        navigateSlashMenu("down");
+        return;
+      }
+      if (e.key === "ArrowUp") {
+        e.preventDefault();
+        navigateSlashMenu("up");
+        return;
+      }
+      if (e.key === "Tab") {
+        e.preventDefault();
+        confirmSlashMenu();
+        return;
+      }
+      if (e.key === "Escape") {
+        e.preventDefault();
+        hideSlashMenu();
+        return;
+      }
     }
-    // 普通 Enter → 发送消息
-    e.preventDefault();
-    sendMessage();
+
+    if (e.key === "Enter") {
+      // 命令菜单可见时，Enter 选择命令
+      if (menuVisible) {
+        e.preventDefault();
+        if (!confirmSlashMenu()) {
+          // 菜单无匹配项，正常发送
+          sendMessage();
+        }
+        return;
+      }
+
+      if (e.ctrlKey || e.shiftKey) {
+        // Ctrl+Enter 或 Shift+Enter → 换行（textarea 自然支持）
+        return; // 不阻止默认行为，让 textarea 插入换行
+      }
+      // 普通 Enter → 发送消息
+      e.preventDefault();
+      sendMessage();
+    }
   }
 });
 
@@ -692,6 +745,238 @@ function getFileIcon(filename) {
     yml: "⚙️", md: "📝", log: "📃", tsv: "📊",
   };
   return iconMap[ext] || "📎";
+}
+
+// ============================================================
+// 斜杠命令系统 - 加载命令定义
+// ============================================================
+async function loadSlashCommands() {
+  try {
+    const resp = await fetch(`${API}/api/slash-commands`);
+    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+    const data = await resp.json();
+    slashCommands = data.commands || {};
+    console.log("[SlashCommands] 已加载", Object.keys(slashCommands).length, "个命令");
+  } catch (err) {
+    console.error("[SlashCommands] 加载失败:", err);
+    // 内置后备命令列表
+    slashCommands = {
+      "/upgrade": { usage: "/upgrade [描述]", description: "触发一次自我升级" },
+      "/upgrade-blueprint": { usage: "/upgrade-blueprint [蓝图ID]", description: "执行指定的蓝图升级" },
+      "/upgrade-cleanup": { usage: "/upgrade-cleanup [文件路径]", description: "清理冗余代码" },
+      "/upgrade-status": { usage: "/upgrade-status", description: "查看升级系统状态" },
+      "/upgrade-rollback": { usage: "/upgrade-rollback", description: "回滚最近一次升级" },
+      "/help": { usage: "/help", description: "列出所有可用命令" },
+    };
+  }
+}
+
+// ============================================================
+// 斜杠命令菜单 - 初始化和交互
+// ============================================================
+function initSlashMenu() {
+  const input = document.getElementById("chatInput");
+
+  input.addEventListener("input", () => {
+    updateSlashMenu();
+  });
+
+  // 点击其他地方关闭菜单
+  document.addEventListener("click", (e) => {
+    const menu = document.getElementById("slashMenu");
+    if (menu && !menu.contains(e.target) && e.target.id !== "chatInput") {
+      hideSlashMenu();
+    }
+  });
+}
+
+function updateSlashMenu() {
+  const input = document.getElementById("chatInput");
+  const text = input.value;
+
+  // 只在输入以 "/" 开头且没有空格（还在输入命令名）时显示
+  if (!text.startsWith("/") || text.includes(" ")) {
+    hideSlashMenu();
+    return;
+  }
+
+  const query = text.toLowerCase();
+  const matches = Object.entries(slashCommands).filter(([cmd]) =>
+    cmd.startsWith(query)
+  );
+
+  if (matches.length === 0) {
+    hideSlashMenu();
+    return;
+  }
+
+  showSlashMenu(matches);
+}
+
+function showSlashMenu(matches) {
+  let menu = document.getElementById("slashMenu");
+  if (!menu) {
+    menu = document.createElement("div");
+    menu.id = "slashMenu";
+    menu.className = "slash-menu";
+    // 插入到 chat-input-area 的父元素中
+    const inputArea = document.querySelector(".chat-input-area");
+    inputArea.parentElement.insertBefore(menu, inputArea);
+  }
+
+  slashMenuIndex = -1;
+  let html = '<div class="slash-menu-header">/ 命令</div>';
+  matches.forEach(([cmd, info], idx) => {
+    html +=
+      '<div class="slash-menu-item" data-cmd="' + escapeHtml(cmd) + '" data-idx="' + idx + '">' +
+      '<div class="slash-menu-cmd">' + escapeHtml(cmd) + '</div>' +
+      '<div class="slash-menu-desc">' + escapeHtml(info.description) + '</div>' +
+      '</div>';
+  });
+  menu.innerHTML = html;
+  menu.style.display = "block";
+
+  // 绑定点击事件
+  menu.querySelectorAll(".slash-menu-item").forEach((item) => {
+    item.addEventListener("click", () => {
+      selectSlashCommand(item.getAttribute("data-cmd"));
+    });
+    item.addEventListener("mouseenter", () => {
+      clearSlashMenuActive();
+      item.classList.add("active");
+      slashMenuIndex = parseInt(item.getAttribute("data-idx"), 10);
+    });
+  });
+}
+
+function hideSlashMenu() {
+  const menu = document.getElementById("slashMenu");
+  if (menu) menu.style.display = "none";
+  slashMenuIndex = -1;
+}
+
+function selectSlashCommand(cmd) {
+  const input = document.getElementById("chatInput");
+  // 如果命令接受参数（usage 中含 [...]），在后面加空格方便继续输入
+  const info = slashCommands[cmd];
+  const hasArgs = info && info.usage && info.usage.includes("[");
+  input.value = hasArgs ? cmd + " " : cmd;
+  hideSlashMenu();
+  input.focus();
+  updateCharCount();
+  autoResizeTextarea();
+}
+
+function clearSlashMenuActive() {
+  const menu = document.getElementById("slashMenu");
+  if (!menu) return;
+  menu.querySelectorAll(".slash-menu-item").forEach((el) =>
+    el.classList.remove("active")
+  );
+}
+
+function navigateSlashMenu(direction) {
+  const menu = document.getElementById("slashMenu");
+  if (!menu || menu.style.display === "none") return false;
+
+  const items = menu.querySelectorAll(".slash-menu-item");
+  if (items.length === 0) return false;
+
+  clearSlashMenuActive();
+
+  if (direction === "down") {
+    slashMenuIndex = (slashMenuIndex + 1) % items.length;
+  } else {
+    slashMenuIndex = slashMenuIndex <= 0 ? items.length - 1 : slashMenuIndex - 1;
+  }
+
+  items[slashMenuIndex].classList.add("active");
+  items[slashMenuIndex].scrollIntoView({ block: "nearest" });
+  return true;
+}
+
+function confirmSlashMenu() {
+  const menu = document.getElementById("slashMenu");
+  if (!menu || menu.style.display === "none") return false;
+
+  const items = menu.querySelectorAll(".slash-menu-item");
+  if (slashMenuIndex >= 0 && slashMenuIndex < items.length) {
+    selectSlashCommand(items[slashMenuIndex].getAttribute("data-cmd"));
+    return true;
+  }
+  // 如果没有选中项但菜单可见，选第一个
+  if (items.length > 0) {
+    selectSlashCommand(items[0].getAttribute("data-cmd"));
+    return true;
+  }
+  return false;
+}
+
+// ============================================================
+// 升级进度消息展示
+// ============================================================
+function addUpgradeProgress(text) {
+  const container = document.getElementById("chatMessages");
+
+  // 查找或创建升级进度容器
+  let progressWrap = document.getElementById("upgradeProgressWrap");
+  if (!progressWrap) {
+    // 先移除打字指示器，避免冲突
+    removeTypingIndicator();
+
+    const div = document.createElement("div");
+    div.className = "message message-aeva";
+    div.id = "upgradeProgressWrap";
+
+    const bubble = document.createElement("div");
+    bubble.className = "message-bubble upgrade-progress-bubble";
+    bubble.innerHTML =
+      '<div class="upgrade-progress-header">⚡ 自我升级中...</div>' +
+      '<div class="upgrade-progress-list" id="upgradeProgressList"></div>';
+    div.appendChild(bubble);
+    container.appendChild(div);
+    progressWrap = div;
+  }
+
+  const list = document.getElementById("upgradeProgressList");
+  const step = document.createElement("div");
+  step.className = "upgrade-progress-step";
+
+  // 判断是否是完成/错误/普通步骤
+  const isError = text.includes("❌") || text.includes("失败") || text.includes("错误");
+  const isDone = text.includes("✅") || text.includes("完成") || text.includes("成功");
+
+  if (isError) {
+    step.classList.add("step-error");
+  } else if (isDone) {
+    step.classList.add("step-done");
+  } else {
+    step.classList.add("step-running");
+  }
+
+  step.innerHTML =
+    '<span class="step-indicator">' + (isError ? "✗" : isDone ? "✓" : "›") + '</span>' +
+    '<span class="step-text">' + escapeHtml(text) + '</span>';
+
+  list.appendChild(step);
+
+  // 标记之前的 running 步骤为完成
+  const prevRunning = list.querySelectorAll(".step-running");
+  prevRunning.forEach((el, i) => {
+    if (i < prevRunning.length - 1) {
+      el.classList.remove("step-running");
+      el.classList.add("step-done");
+      el.querySelector(".step-indicator").textContent = "✓";
+    }
+  });
+
+  container.scrollTop = container.scrollHeight;
+}
+
+// 清理升级进度容器（在最终 reply 到达后）
+function clearUpgradeProgress() {
+  const wrap = document.getElementById("upgradeProgressWrap");
+  if (wrap) wrap.remove();
 }
 
 // ============================================================

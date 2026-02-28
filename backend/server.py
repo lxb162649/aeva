@@ -303,13 +303,24 @@ async def upload_files(files: list[UploadFile] = File(...)) -> dict[str, object]
 
 
 # ============================================================
+# 斜杠命令列表 API
+# ============================================================
+
+
+@app.get("/api/slash-commands")
+async def get_slash_commands() -> dict[str, object]:
+    """返回所有可用的斜杠命令定义，供前端自动补全使用"""
+    return {"commands": agent.SLASH_COMMANDS}
+
+
+# ============================================================
 # WebSocket 聊天
 # ============================================================
 
 
 @app.websocket("/ws/chat")
 async def chat(ws: WebSocket) -> None:
-    """WebSocket 聊天端点：接收用户消息，返回 AEVA 回复（支持文件附件）"""
+    """WebSocket 聊天端点：接收用户消息，返回 AEVA 回复（支持文件附件和斜杠命令）"""
     await ws.accept()
     try:
         while True:
@@ -325,6 +336,47 @@ async def chat(ws: WebSocket) -> None:
             if len(user_text) > MAX_INPUT_CHARS:
                 user_text = user_text[:MAX_INPUT_CHARS]
 
+            # ---- 斜杠命令拦截 ----
+            if agent.is_slash_command(user_text):
+                echo = store.load_echo()
+                log.info("[斜杠命令] %s", user_text[:200])
+
+                # 记录命令到聊天历史
+                store.add_chat_message("user", user_text)
+
+                # 执行命令，传入 ws.send_text 以支持中间进度消息
+                reply = await agent.handle_slash_command(
+                    user_text, echo, ws_send=ws.send_text
+                )
+
+                # 输出限制
+                if len(reply) > MAX_OUTPUT_CHARS:
+                    reply = reply[:MAX_OUTPUT_CHARS]
+
+                store.add_chat_message("assistant", reply)
+                log.info("[命令结果] %s", reply[:200])
+
+                echo = store.load_echo()
+                intimacy_info = emotion.get_intimacy_level(echo)
+
+                await ws.send_text(
+                    json.dumps(
+                        {
+                            "type": "reply",
+                            "text": reply,
+                            "mood": echo.get("mood", "calm"),
+                            "mood_display": emotion.get_mood_display(
+                                str(echo.get("mood", "calm"))
+                            ),
+                            "energy": echo.get("energy", 0),
+                            "intimacy": intimacy_info,
+                        },
+                        ensure_ascii=False,
+                    )
+                )
+                continue
+
+            # ---- 普通消息处理 ----
             # 如果有文件附件，将文件信息附加到消息中
             file_context = ""
             if files_info:

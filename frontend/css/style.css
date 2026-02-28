@@ -857,6 +857,146 @@ body {
 }
 
 /* ============================================================
+   斜杠命令菜单
+   ============================================================ */
+.slash-menu {
+  display: none;
+  position: relative;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  border-bottom: none;
+  max-height: 220px;
+  overflow-y: auto;
+  flex-shrink: 0;
+  z-index: 10;
+}
+
+.slash-menu-header {
+  padding: 6px 14px;
+  font-size: 10px;
+  color: var(--text-secondary);
+  letter-spacing: 1px;
+  text-transform: uppercase;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg-tertiary);
+  position: sticky;
+  top: 0;
+}
+
+.slash-menu-item {
+  padding: 8px 14px;
+  cursor: pointer;
+  transition: background 0.15s;
+  border-bottom: 1px solid rgba(42, 42, 62, 0.4);
+}
+
+.slash-menu-item:hover,
+.slash-menu-item.active {
+  background: rgba(99, 102, 241, 0.12);
+}
+
+.slash-menu-item.active {
+  border-left: 2px solid var(--accent);
+  padding-left: 12px;
+}
+
+.slash-menu-cmd {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--accent);
+  margin-bottom: 2px;
+  font-family: var(--font-mono);
+}
+
+.slash-menu-desc {
+  font-size: 10px;
+  color: var(--text-secondary);
+  line-height: 1.4;
+}
+
+/* ============================================================
+   升级进度消息样式
+   ============================================================ */
+.upgrade-progress-bubble {
+  background: rgba(99, 102, 241, 0.06) !important;
+  border: 1px solid rgba(99, 102, 241, 0.25) !important;
+  padding: 10px 14px !important;
+  min-width: 240px;
+}
+
+.upgrade-progress-header {
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--accent);
+  margin-bottom: 8px;
+  letter-spacing: 0.5px;
+  padding-bottom: 6px;
+  border-bottom: 1px dashed rgba(99, 102, 241, 0.2);
+}
+
+.upgrade-progress-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.upgrade-progress-step {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  font-size: 11px;
+  line-height: 1.5;
+  padding: 3px 0;
+  animation: fadeSlideIn 0.2s ease;
+}
+
+.step-indicator {
+  flex-shrink: 0;
+  width: 14px;
+  height: 14px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 10px;
+  font-weight: 700;
+  border-radius: 50%;
+  margin-top: 2px;
+}
+
+.step-running .step-indicator {
+  color: var(--accent);
+  background: rgba(99, 102, 241, 0.15);
+  animation: stepPulse 1.2s ease-in-out infinite;
+}
+
+.step-done .step-indicator {
+  color: var(--mood-happy);
+  background: rgba(16, 185, 129, 0.15);
+}
+
+.step-error .step-indicator {
+  color: var(--mood-excited);
+  background: rgba(244, 63, 94, 0.15);
+}
+
+.step-running .step-text {
+  color: var(--text-primary);
+}
+
+.step-done .step-text {
+  color: var(--text-secondary);
+}
+
+.step-error .step-text {
+  color: var(--mood-excited);
+}
+
+@keyframes stepPulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.5; }
+}
+
+/* ============================================================
    扫描线 + 噪点
    ============================================================ */
 body::before {
