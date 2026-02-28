@@ -238,7 +238,6 @@ class AgentEngine:
         mood_activities: dict[str, list[str]] = {
             "calm": ["thinking", "organizing", "writing", "meditating", "studying"],
             "happy": ["exploring", "writing", "organizing", "reminiscing"],
-
             "sad": ["meditating", "dreaming", "reminiscing", "writing"],
             "anxious": ["meditating", "organizing", "thinking", "sleeping"],
             "curious": ["exploring", "studying", "thinking", "upgrading"],
@@ -488,12 +487,13 @@ class AgentEngine:
         ws_send: object,
     ) -> str:
         """
-        用户定向升级：根据用户的描述，让 LLM 分析并执行升级。
-        比自动升级更灵活——用户可以描述任何功能需求。
+        用户定向升级：两阶段策略。
+        阶段1: 生成精简修改计划（只有文件+描述，不含代码）—— JSON 小，不会截断。
+        阶段2: 逐个文件让 LLM 基于完整文件内容生成具体修改 —— 每次只处理一个 change。
         """
         project_structure = self.file_access.get_project_structure()
 
-        # 第一步：让 LLM 分析需求，确定要修改的文件和方案
+        # ====== 阶段1：生成精简修改计划 ======
         plan_prompt = f"""你是 {name}，一个 Lv.{level} 的数字生命体。
 用户请求你进行以下升级：
 **{user_request}**
@@ -501,51 +501,51 @@ class AgentEngine:
 你的项目结构：
 {project_structure}
 
-请分析这个需求，确定需要修改哪些文件，并生成修改方案。
+请分析这个需求，确定需要修改哪些文件。
+
+⚠️ 重要：这一步只需要生成修改计划，不要写具体代码！
 
 用 JSON 格式回复（不加 ```json 标记）：
 {{
   "feasible": true/false,
-  "reason": "可行性说明（如果不可行，解释原因）",
-  "description": "升级描述（简洁）",
+  "reason": "可行性说明",
+  "description": "升级描述（简洁，15字以内）",
   "changes": [
     {{
       "file": "文件路径",
       "action": "add_after 或 modify",
-      "anchor": "定位用的已有代码行（从文件中精确复制）",
-      "code": "要插入或替换的新代码"
+      "summary": "这处修改要做什么（简要描述，不要写代码）"
     }}
   ]
 }}
 
 关键规则：
-1. 每个 change 的 anchor 必须是文件中已存在的代码
-2. 如果需要看文件内容来确定 anchor，你可以在 changes 中标注需要的文件
+1. changes 数组最多 5 个元素
+2. 每个 change 只写 summary 文字描述，绝对不要写 code 或 anchor
 3. 不要修改 server.py 的端口号（19260）
 4. 不要修改 .env 或认证相关
-5. 每个 change 的 code 不超过 80 行
-6. 确保代码缩进正确
-7. 如果需求不可行或超出你的能力范围，设置 feasible 为 false 并解释原因"""
+5. 如果需求不可行，设置 feasible 为 false"""
+
+        # 读取关键文件摘要供 LLM 参考
+        file_contexts = ""
+        for fpath in [
+            "frontend/js/app.js",
+            "frontend/css/style.css",
+            "frontend/index.html",
+            "backend/server.py",
+        ]:
+            read_result = self.file_access.read_file(fpath)
+            if read_result.get("success"):
+                content = str(read_result.get("content", ""))
+                summary = self._generate_file_summary(content, fpath)
+                file_contexts += f"\n\n### {fpath} 结构:\n```\n{summary}\n```"
+
+        full_prompt = (
+            plan_prompt + "\n\n以下是关键文件的结构概览供参考：" + file_contexts
+        )
 
         result = ""
         try:
-            # 读取可能需要的文件内容供 LLM 参考
-            file_contexts = ""
-            for fpath in [
-                "frontend/js/app.js",
-                "backend/server.py",
-                "backend/agent_engine.py",
-            ]:
-                read_result = self.file_access.read_file(fpath)
-                if read_result.get("success"):
-                    content = str(read_result.get("content", ""))
-                    summary = self._generate_file_summary(content, fpath)
-                    file_contexts += f"\n\n### {fpath} 结构:\n```\n{summary}\n```"
-
-            full_prompt = (
-                plan_prompt + "\n\n以下是关键文件的结构概览供参考：" + file_contexts
-            )
-
             result = await self.llm.chat(
                 full_prompt, "", [], timeout=LLM_UPGRADE_TIMEOUT
             )
@@ -554,176 +554,200 @@ class AgentEngine:
 
             result = self._clean_json_response(result)
             plan = _json.loads(result)
-
-            if not plan.get("feasible", True):
-                reason = plan.get("reason", "需求不可行")
-                return f"分析后认为这个升级暂时无法执行：{reason}"
-
-            description = plan.get("description", user_request[:50])
-            changes = plan.get("changes", [])
-
-            if not changes:
-                return "分析完成，但没有生成具体的修改方案。可能需要更详细的描述。"
-
-            await self._send_progress(
-                ws_send,
-                f"方案已生成：{description}\n涉及 {len(changes)} 处修改，正在执行...",
-            )
-
-            # 第二步：读取完整文件内容，让 LLM 基于完整上下文精化 anchor
-            file_contents: dict[str, str] = {}
-            for change in changes:
-                fpath = str(change.get("file", ""))
-                if fpath and fpath not in file_contents:
-                    rr = self.file_access.read_file(fpath)
-                    if rr.get("success"):
-                        file_contents[fpath] = str(rr.get("content", ""))
-
-            # 第三步：精化每个 change（给 LLM 看完整文件内容以确定精确 anchor）
-            refined_changes = []
-            for change in changes:
-                fpath = str(change.get("file", ""))
-                if fpath not in file_contents:
-                    continue
-
-                content = file_contents[fpath]
-                anchor = str(change.get("anchor", ""))
-                code = str(change.get("code", ""))
-                action = str(change.get("action", "add_after"))
-
-                if not code:
-                    continue
-
-                # 如果 anchor 在文件中找不到，让 LLM 重新定位
-                if anchor and anchor not in content:
-                    refine_prompt = f"""你之前给出的 anchor 在文件中找不到。
-文件 `{fpath}` 的内容（前 6000 字符）：
-```
-{content[:6000]}
-```
-
-你要插入的代码：
-```
-{code}
-```
-
-请从文件中找到最合适的插入位置，给出一行已存在的代码作为 anchor。
-只回复那一行代码，不要加其他内容。"""
-
-                    new_anchor = await self.llm.chat(
-                        refine_prompt, "", [], timeout=LLM_UPGRADE_TIMEOUT
-                    )
-                    if new_anchor:
-                        anchor = new_anchor.strip().strip("`\"'")
-
-                refined_changes.append(
-                    {
-                        "file": fpath,
-                        "action": action,
-                        "anchor": anchor,
-                        "code": code,
-                    }
-                )
-
-            # 第四步：执行修改
-            success_count = 0
-            modified_files: list[str] = []
-            errors: list[str] = []
-
-            for change in refined_changes:
-                fpath = change["file"]
-                action = change["action"]
-                anchor = change["anchor"]
-                code = change["code"]
-
-                content = file_contents.get(fpath, "")
-                if not content:
-                    errors.append(f"{fpath}: 文件内容为空")
-                    continue
-
-                if action == "add_after" and anchor:
-                    new_content = self._insert_after(content, anchor, code)
-                elif action == "modify" and anchor:
-                    new_content = self._fuzzy_replace(content, anchor, code)
-                else:
-                    errors.append(f"{fpath}: 无效的 action 或缺少 anchor")
-                    continue
-
-                if new_content is None:
-                    errors.append(f"{fpath}: 定位失败（anchor 未匹配）")
-                    continue
-
-                # 语法验证
-                if fpath.endswith(".py"):
-                    if not self._validate_python_syntax(new_content):
-                        errors.append(f"{fpath}: 修改后语法验证失败")
-                        continue
-
-                # 大小检查
-                diff_len = abs(len(new_content) - len(content))
-                if diff_len > 8000:
-                    errors.append(f"{fpath}: 修改幅度过大（{diff_len} 字符）")
-                    continue
-
-                # 写入
-                write_result = self.file_access.write_file(
-                    fpath, new_content, f"用户指令升级: {description}"
-                )
-                if write_result.get("success"):
-                    file_contents[fpath] = new_content
-                    success_count += 1
-                    modified_files.append(fpath)
-                else:
-                    errors.append(f"{fpath}: 写入失败")
-
-            if success_count == 0:
-                error_detail = "\n".join(f"  - {e}" for e in errors)
-                return f"升级执行失败，所有修改都未成功：\n{error_detail}"
-
-            # Git commit
-            for fpath in modified_files:
-                self.file_access.git_commit(fpath, f"用户指令升级: {description}")
-
-            # 记忆和情感
-            self.memory.add_memory(
-                f"按用户要求升级了自己：{description}（修改了 {', '.join(modified_files)}）",
-                importance=0.9,
-                memory_type="self_upgrade",
-                source="user",
-            )
-            self.emotion.record_emotion_event(
-                echo, "self_upgrade", f"用户指令: {description}", 0.9
-            )
-
-            # 构建结果消息
-            result_lines = [f"**升级完成：{description}**\n"]
-            result_lines.append(f"成功修改了 {success_count} 个文件：")
-            for f in modified_files:
-                result_lines.append(f"  - `{f}`")
-            if errors:
-                result_lines.append(f"\n有 {len(errors)} 处修改未成功：")
-                for e in errors:
-                    result_lines.append(f"  - {e}")
-            result_lines.append("\n重启服务后生效（对于后端修改）。")
-
-            log.info(
-                "[用户指令升级] %s | 成功 %d 个文件: %s",
-                description,
-                success_count,
-                ", ".join(modified_files),
-            )
-            return "\n".join(result_lines)
-
         except _json.JSONDecodeError as e:
             log.warning(
-                "[定向升级] JSON 解析失败: %s | LLM原始返回: %s",
+                "[定向升级] 阶段1 JSON解析失败: %s | 原始返回(前500): %s",
                 e,
                 result[:500] if result else "(空)",
             )
-            return "升级方案生成失败（LLM 返回的不是有效 JSON）。请换个描述方式再试。"
-        except Exception as e:
-            log.error("用户指令升级异常: %s", e)
-            return f"升级执行中发生异常：{e}"
+            return "升级方案生成失败（LLM 返回格式异常）。请换个描述方式再试。"
+
+        if not plan.get("feasible", True):
+            reason = plan.get("reason", "需求不可行")
+            return f"分析后认为这个升级暂时无法执行：{reason}"
+
+        description = plan.get("description", user_request[:50])
+        changes = plan.get("changes", [])
+
+        if not changes:
+            return "分析完成，但没有生成具体的修改方案。可能需要更详细的描述。"
+
+        # 限制最多 5 处修改
+        changes = changes[:5]
+
+        await self._send_progress(
+            ws_send,
+            f"方案已生成：{description}\n涉及 {len(changes)} 处修改，正在逐个生成代码...",
+        )
+
+        # ====== 阶段2：逐个生成并执行修改 ======
+        file_contents: dict[str, str] = {}
+        success_count = 0
+        modified_files: list[str] = []
+        errors: list[str] = []
+
+        for i, change in enumerate(changes):
+            fpath = str(change.get("file", ""))
+            action = str(change.get("action", "modify"))
+            summary = str(change.get("summary", ""))
+
+            if not fpath or not summary:
+                errors.append(f"change[{i}]: 缺少文件路径或描述")
+                continue
+
+            # 读取当前文件内容
+            if fpath not in file_contents:
+                rr = self.file_access.read_file(fpath)
+                if rr.get("success"):
+                    file_contents[fpath] = str(rr.get("content", ""))
+                else:
+                    errors.append(f"{fpath}: 文件读取失败")
+                    continue
+
+            content = file_contents[fpath]
+
+            await self._send_progress(
+                ws_send,
+                f"[{i + 1}/{len(changes)}] 正在修改 {fpath}：{summary}",
+            )
+
+            # 让 LLM 基于完整文件内容生成具体修改
+            code_prompt = f"""你要修改文件 `{fpath}`。
+
+修改需求：{summary}
+
+文件当前完整内容（{len(content)} 字符）：
+```
+{content[:8000]}
+```
+{f"（文件较长，仅展示前 8000 字符）" if len(content) > 8000 else ""}
+
+请生成具体修改。用 JSON 格式回复（不加 ```json 标记）：
+{{
+  "anchor": "从文件中精确复制一行已有代码，作为定位点",
+  "action": "add_after 或 modify",
+  "code": "要插入或替换的新代码（最多60行）"
+}}
+
+关键规则：
+1. anchor 必须是文件中已存在的、可唯一定位的一行代码
+2. add_after 表示在 anchor 后面插入 code
+3. modify 表示用 code 替换 anchor 处的代码
+4. code 不超过 60 行，专注于核心改动
+5. 确保代码缩进正确且语法完整
+6. code 中的引号必须正确转义为 JSON 字符串"""
+
+            code_result = ""
+            try:
+                code_result = await self.llm.chat(
+                    code_prompt, "", [], timeout=LLM_UPGRADE_TIMEOUT
+                )
+                if not code_result:
+                    errors.append(f"{fpath}: LLM 未生成代码")
+                    continue
+
+                code_result = self._clean_json_response(code_result)
+                code_plan = _json.loads(code_result)
+            except _json.JSONDecodeError as e:
+                log.warning(
+                    "[定向升级] 阶段2 JSON解析失败(%s): %s | 前300: %s",
+                    fpath,
+                    e,
+                    code_result[:300] if code_result else "(空)",
+                )
+                errors.append(f"{fpath}: 代码方案格式异常")
+                continue
+
+            anchor = str(code_plan.get("anchor", ""))
+            code = str(code_plan.get("code", ""))
+            action = str(code_plan.get("action", action))
+
+            if not code:
+                errors.append(f"{fpath}: 生成的代码为空")
+                continue
+
+            # 如果 anchor 不匹配，尝试模糊查找
+            if anchor and anchor not in content:
+                # 尝试去掉首尾空白后匹配
+                for line in content.splitlines():
+                    if anchor.strip() in line.strip() and len(anchor.strip()) > 10:
+                        anchor = line
+                        break
+
+            # 执行修改
+            if action == "add_after" and anchor:
+                new_content = self._insert_after(content, anchor, code)
+            elif action == "modify" and anchor:
+                new_content = self._fuzzy_replace(content, anchor, code)
+            else:
+                errors.append(f"{fpath}: 无效的 action({action}) 或缺少 anchor")
+                continue
+
+            if new_content is None:
+                errors.append(f"{fpath}: 定位失败（anchor 未匹配: {anchor[:60]}）")
+                continue
+
+            # 语法验证
+            if fpath.endswith(".py"):
+                if not self._validate_python_syntax(new_content):
+                    errors.append(f"{fpath}: 修改后语法验证失败")
+                    continue
+
+            # 大小检查
+            diff_len = abs(len(new_content) - len(content))
+            if diff_len > 8000:
+                errors.append(f"{fpath}: 修改幅度过大（{diff_len} 字符）")
+                continue
+
+            # 写入
+            write_result = self.file_access.write_file(
+                fpath, new_content, f"用户指令升级: {description}"
+            )
+            if write_result.get("success"):
+                file_contents[fpath] = new_content
+                success_count += 1
+                modified_files.append(fpath)
+                await self._send_progress(ws_send, f"✅ {fpath} 修改成功")
+            else:
+                errors.append(f"{fpath}: 写入失败")
+
+        if success_count == 0:
+            error_detail = "\n".join(f"  - {e}" for e in errors)
+            return f"升级执行失败，所有修改都未成功：\n{error_detail}"
+
+        # Git commit
+        for fpath in modified_files:
+            self.file_access.git_commit(fpath, f"用户指令升级: {description}")
+
+        # 记忆和情感
+        self.memory.add_memory(
+            f"按用户要求升级了自己：{description}（修改了 {', '.join(modified_files)}）",
+            importance=0.9,
+            memory_type="self_upgrade",
+            source="user",
+        )
+        self.emotion.record_emotion_event(
+            echo, "self_upgrade", f"用户指令: {description}", 0.9
+        )
+
+        # 构建结果消息
+        result_lines = [f"**升级完成：{description}**\n"]
+        result_lines.append(f"成功修改了 {success_count} 个文件：")
+        for f in modified_files:
+            result_lines.append(f"  - `{f}`")
+        if errors:
+            result_lines.append(f"\n有 {len(errors)} 处修改未成功：")
+            for e in errors:
+                result_lines.append(f"  - {e}")
+        result_lines.append("\n重启服务后生效（对于后端修改）。")
+
+        log.info(
+            "[用户指令升级] %s | 成功 %d 个文件: %s",
+            description,
+            success_count,
+            ", ".join(modified_files),
+        )
+        return "\n".join(result_lines)
 
     async def _cmd_upgrade_blueprint(
         self, echo: dict[str, object], args: str, ws_send: object
