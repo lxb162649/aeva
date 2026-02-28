@@ -254,17 +254,6 @@ class EmotionSystem:
         )
         return new_value
 
-    def update_intimacy_peak(self, echo: dict[str, object]) -> float:
-        """
-        更新亲密度历史峰值，用于衰减保底计算。
-        应在每次 add_intimacy 后调用。
-        """
-        current = self.get_intimacy(echo)
-        peak = float(str(echo.get("intimacy_peak", 0)))
-        if current > peak:
-            echo["intimacy_peak"] = current
-            return current
-        return peak
 
     def get_intimacy_level(self, echo: dict[str, object]) -> dict[str, object]:
         """获取当前亲密度等级信息（含进度和下一级所需值）"""
