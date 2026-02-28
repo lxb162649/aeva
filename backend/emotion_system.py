@@ -6,7 +6,7 @@ import random
 import math
 from datetime import datetime
 from uuid import uuid4
-from typing import Optional
+
 
 from models import DataStore
 from logger import get_logger
@@ -16,7 +16,7 @@ log = get_logger("Emotion")
 
 # ---- 心情类型定义 ----
 # 7 种基础心情，比 MVP 版增加了 excited / sleepy / curious
-MOODS = ["calm", "happy", "lonely", "thinking", "excited", "sleepy", "curious"]
+
 
 # 心情的中文名和 emoji 映射
 MOOD_DISPLAY: dict[str, dict[str, str]] = {
