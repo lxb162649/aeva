@@ -238,11 +238,7 @@ class AgentEngine:
         mood_activities: dict[str, list[str]] = {
             "calm": ["thinking", "organizing", "writing", "meditating", "studying"],
             "happy": ["exploring", "writing", "organizing", "reminiscing"],
-            "sad": ["meditating", "dreaming", "reminiscing", "writing"],
-            "curious": ["exploring", "studying", "thinking", "upgrading"],
-            "anxious": ["meditating", "organizing", "writing"],
-            "lonely": ["reminiscing", "writing", "dreaming", "waiting"],
-            "excited": ["exploring", "upgrading", "studying", "writing"],
+
             "sad": ["meditating", "dreaming", "reminiscing", "writing"],
             "anxious": ["meditating", "organizing", "thinking", "sleeping"],
             "curious": ["exploring", "studying", "thinking", "upgrading"],
