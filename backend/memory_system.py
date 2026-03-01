@@ -34,16 +34,6 @@ MEMORY_LAYERS = {
     },
 }
 
-# ---- 记忆类型 ----
-MEMORY_TYPES = {
-    "conversation": "对话",
-    "emotion": "情感",
-    "event": "事件",
-    "knowledge": "知识",
-    "preference": "偏好",
-    "thought": "思考",
-}
-
 
 class MemorySystem:
     """
